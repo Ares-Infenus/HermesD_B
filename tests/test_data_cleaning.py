@@ -108,6 +108,8 @@ def main():
     # Imprimir la arquitectura del diccionario como cascada
     imprimir_cascada(DB)
 
+    print(DB['EURUSD']['1W']['EURUSD_1W_ASK.csv'])
+
     
 
 main()
