@@ -96,6 +96,44 @@ def imprimir_cascada(diccionario, indent=0):
             # Si el valor es un subdiccionario, llama a la función de manera recursiva aumentando la indentación
             imprimir_cascada(value, indent + 1)
 
+def datetime_fix(dataframes):
+    """
+    Convierte la columna 'Local time' de todos los DataFrames en el diccionario 
+    a un objeto datetime de pandas.
+
+    Args:
+        dataframes (dict): Un diccionario que contiene DataFrames organizados por pares de divisas y marcos de tiempo.
+            La estructura esperada es:
+            {
+                'EURUSD': {
+                    '1M': {
+                        'EURUSD_1M_BID.csv': DataFrame,
+                        'EURUSD_1M_ASK.csv': DataFrame
+                    },
+                    ...
+                },
+                ...
+            }
+
+    Returns:
+        dict: El mismo diccionario de entrada con las columnas 'Local time' convertidas a tipo datetime.
+    """
+    # Iterar a través del diccionario
+    for currency_pair, timeframes in dataframes.items():
+        for timeframe, dfs in timeframes.items():
+            for filename, df in dfs.items():
+                # Verificar si la columna "Local time" existe en el DataFrame
+                if 'Local time' in df.columns:
+                    # Transformar la columna "Local time" a tipo datetime
+                    try:
+                        df['Local time'] = pd.to_datetime(df['Local time'], format='%d.%m.%Y %H:%M:%S.%f GMT%z')
+                        # (Opcional) Imprimir un mensaje para verificar la conversión
+                        print(f"Converted 'Local time' in {filename} under {currency_pair} {timeframe}")
+                    except Exception as e:
+                        print(f"Error converting 'Local time' in {filename} under {currency_pair} {timeframe}: {e}")
+
+    return dataframes
+
 
 # Función principal
 def main():
@@ -108,8 +146,11 @@ def main():
     # Imprimir la arquitectura del diccionario como cascada
     imprimir_cascada(DB)
 
-    print(DB['EURUSD']['1W']['EURUSD_1W_ASK.csv'])
+    #Arreglando la columna Local time de todos los arhivos
+    DB = datetime_fix(DB)
+    print(DB['EURUSD']['1M']['EURUSD_1M_BID.csv'])
 
+    #
     
 
 main()
