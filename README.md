@@ -10,10 +10,6 @@
   - 1 Día
   - 4 Horas
   - 1 Hora
-  - 30 Minutos
-  - 15 Minutos
-  - 5 Minutos
-  - 1 Minuto
 
 - **Activos disponibles**: 
   - EUR/USD
@@ -44,3 +40,40 @@ Se prevé que **HermesData** sea utilizada para optimizar búsquedas y maximizar
 
 ## Licencia
 Este proyecto se desarrollará como código abierto para que todos puedan utilizarlo y contribuir. Se busca proporcionar una solución accesible para la búsqueda de datos históricos de manera efectiva.
+
+Estado |=                 |10%
+Buscando Archivo
+
+Estructura de carpetas
+
+/mi_proyecto
+│
+├── /data
+│   ├── /raw               # Datos originales sin procesar (CSV sucios)
+│   ├── /cleaned           # Datos limpios después del procesamiento
+│   └── /processed         # Datos procesados (si aplica)
+│
+├── /notebooks             # Jupyter notebooks para análisis y limpieza exploratoria
+│
+├── /scripts               # Scripts de Python para limpieza y transformación de datos
+│   ├── data_cleaning.py   # Script principal de limpieza de datos
+│   ├── data_transformation.py  # Script para transformar datos si es necesario
+│   └── utils.py           # Funciones utilitarias que se pueden reutilizar
+│
+├── /config                # Archivos de configuración
+│   ├── config.yaml        # Configuración del proyecto (rutas, parámetros, etc.)
+│   └── database_config.py  # Configuración específica para la conexión a Oracle DB
+│
+├── /db                    # Scripts y archivos relacionados con la base de datos
+│   ├── create_schema.sql   # Script SQL para crear la estructura de la base de datos
+│   ├── insert_data.sql      # Script SQL para insertar datos en la base de datos
+│   └── queries.sql          # Consultas SQL útiles para la base de datos
+│
+├── /tests                  # Pruebas automatizadas
+│   ├── test_data_cleaning.py  # Pruebas para el script de limpieza de datos
+│   └── test_database.py        # Pruebas para interacciones con la base de datos
+│
+├── /logs                   # Archivos de registro de procesos
+│   └── process_log.log      # Registro de la limpieza de datos y errores
+│
+└── README.md               # Documentación del proyecto
