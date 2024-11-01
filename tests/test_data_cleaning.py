@@ -3,9 +3,10 @@ import pandas as pd
 import numpy as np
 import os 
 from pathlib import Path
-from typing import Dict, Union, Optional, Any
+from typing import Dict, Union, Optional, Any, List
 import logging
 from dataclasses import dataclass
+import pytz
 from abc import ABC, abstractmethod
 #==================================# VAR #=====================================#
 
@@ -236,6 +237,201 @@ class TreePrinter:
             self.print_tree(value, indent + self.config.indent_size, True, new_prefix)
 
 
+class DateTimeConfig:
+    """Configuración para el procesamiento de fechas."""
+    default_format: str = '%d.%m.%Y %H:%M:%S.%f GMT%z'
+    timezone: str = 'UTC'
+    column_name: str = 'Local time'
+    drop_bad_rows: bool = False
+    coerce_errors: bool = True
+
+class DataFrameProcessor(ABC):
+    """Clase abstracta base para procesadores de DataFrames."""
+    @abstractmethod
+    def can_process(self, df: pd.DataFrame) -> bool:
+        pass
+    
+    @abstractmethod
+    def process(self, df: pd.DataFrame, config: Any) -> pd.DataFrame:
+        pass
+
+class DateTimeProcessor(DataFrameProcessor):
+    """Procesador específico para conversión de fechas en DataFrames."""
+    
+    def can_process(self, df: pd.DataFrame) -> bool:
+        """Verifica si el DataFrame puede ser procesado."""
+        return isinstance(df, pd.DataFrame) and self.config.column_name in df.columns
+    
+    def __init__(self, config: Optional[DateTimeConfig] = None):
+        """
+        Inicializa el procesador de fechas.
+        
+        Args:
+            config: Configuración para el procesamiento de fechas
+        """
+        self.config = config or DateTimeConfig()
+    
+    def process(self, df: pd.DataFrame, path_info: Dict[str, str]) -> pd.DataFrame:
+        """
+        Procesa las fechas en el DataFrame.
+        
+        Args:
+            df: DataFrame a procesar
+            path_info: Información sobre la ubicación del DataFrame
+        
+        Returns:
+            pd.DataFrame: DataFrame con las fechas procesadas
+        
+        Raises:
+            ValueError: Si hay errores en el procesamiento de fechas
+        """
+        try:
+            df = df.copy()
+            col_name = self.config.column_name
+            
+            if not self.can_process(df):
+                logger.warning(f"La columna {col_name} no existe en el DataFrame")
+                return df
+            
+            # Procesar fechas con manejo de errores
+            try:
+                df[col_name] = pd.to_datetime(
+                    df[col_name],
+                    format=self.config.default_format,
+                    errors='coerce' if self.config.coerce_errors else 'raise'
+                )
+                
+                # Manejar zonas horarias
+                if self.config.timezone:
+                    df[col_name] = df[col_name].dt.tz_convert(self.config.timezone)
+                
+                # Opcionalmente eliminar filas con fechas inválidas
+                if self.config.drop_bad_rows:
+                    invalid_dates = df[col_name].isna()
+                    if invalid_dates.any():
+                        logger.warning(
+                            f"Se encontraron {invalid_dates.sum()} fechas inválidas en "
+                            f"{path_info.get('filename', 'unknown file')}"
+                        )
+                        df = df.dropna(subset=[col_name])
+                
+                logger.info(
+                    f"Fechas procesadas exitosamente en {path_info.get('filename', 'unknown file')}"
+                )
+                
+            except Exception as e:
+                logger.error(
+                    f"Error al procesar fechas en {path_info.get('filename', 'unknown file')}: {str(e)}"
+                )
+                raise ValueError(f"Error en el procesamiento de fechas: {str(e)}")
+            
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error general en el procesamiento: {str(e)}")
+            raise
+
+class DataFrameTraverser:
+    """Clase para recorrer estructuras anidadas de DataFrames."""
+    
+    def __init__(self, processor: DataFrameProcessor):
+        """
+        Inicializa el traverser.
+        
+        Args:
+            processor: Procesador a utilizar en cada DataFrame
+        """
+        self.processor = processor
+    
+    def traverse_and_process(self, data: Dict, current_path: Dict[str, str] = None) -> Dict:
+        """
+        Recorre la estructura de datos y procesa cada DataFrame encontrado.
+        
+        Args:
+            data: Estructura de datos anidada
+            current_path: Información sobre la ruta actual en la estructura
+        
+        Returns:
+            Dict: Estructura procesada
+        """
+        if current_path is None:
+            current_path = {}
+        
+        try:
+            result = {}
+            
+            for key, value in data.items():
+                new_path = {**current_path, 'current_key': key}
+                
+                if isinstance(value, pd.DataFrame):
+                    new_path['filename'] = key
+                    result[key] = self.processor.process(value, new_path)
+                elif isinstance(value, dict):
+                    result[key] = self.traverse_and_process(value, new_path)
+                else:
+                    result[key] = value
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error al recorrer la estructura: {str(e)}")
+            raise
+
+@dataclass
+class CleaningConfig:
+    """Configuración para la limpieza de datos."""
+    drop_all_na: bool = True
+    drop_any_na: bool = False
+    drop_duplicates: bool = False
+    remove_outliers: bool = False
+    threshold: Optional[float] = None
+    subset: Optional[List[str]] = None
+    log_details: bool = True
+
+class DataCleaner:
+    """Procesador específico para limpieza de DataFrames."""
+    
+    def __init__(self, config: Optional[CleaningConfig] = None):
+        """
+        Inicializa el limpiador de datos.
+        
+        Args:
+            config: Configuración para la limpieza de datos
+        """
+        self.config = config if config is not None else CleaningConfig()
+    
+    def clean_dataframe(self, df: pd.DataFrame, path_info: Dict[str, str]) -> pd.DataFrame:
+        """
+        Limpia el DataFrame eliminando valores nulos según la configuración.
+        
+        Args:
+            df: DataFrame a limpiar
+            path_info: Información sobre la ubicación del DataFrame
+        
+        Returns:
+            pd.DataFrame: DataFrame limpio
+        """
+        try:
+            original_rows = len(df)
+            df_cleaned = df.copy()
+            
+            # Aplicar limpieza
+            df_cleaned = df_cleaned.dropna()
+            
+            # Registrar resultados si está habilitado el logging
+            if self.config.log_details:
+                rows_removed = original_rows - len(df_cleaned)
+                if rows_removed > 0:
+                    logger.info(
+                        f"Limpieza completada en {path_info.get('filename', 'unknown file')}. "
+                        f"Filas eliminadas: {rows_removed} ({(rows_removed/original_rows)*100:.2f}%)"
+                    )
+            
+            return df_cleaned
+            
+        except Exception as e:
+            logger.error(f"Error en la limpieza del DataFrame: {str(e)}")
+            return df  # Retorna el DataFrame original en caso de error
 
 
 #=====================# Funciones principales #==============================#
@@ -292,59 +488,69 @@ def imprimir_cascada(diccionario: Dict, indent: int = 0) -> None:
         logger.error(f"Error al imprimir la estructura: {str(e)}")
         print(f"Error: No se pudo imprimir la estructura - {str(e)}")
 
-def datetime_fix(dataframes):
+def datetime_fix(dataframes: Dict) -> Dict:
     """
-    Convierte la columna 'Local time' de todos los DataFrames en el diccionario 
-    a un objeto datetime de pandas.
-
+    Función wrapper para mantener compatibilidad con el código existente.
+    
     Args:
-        dataframes (dict): Un diccionario que contiene DataFrames organizados por pares de divisas y marcos de tiempo.
-            La estructura esperada es:
-            {
-                'EURUSD': {
-                    '1M': {
-                        'EURUSD_1M_BID.csv': DataFrame,
-                        'EURUSD_1M_ASK.csv': DataFrame
-                    },
-                    ...
-                },
-                ...
-            }
-
+        dataframes: Diccionario con la estructura de datos a procesar
+    
     Returns:
-        dict: El mismo diccionario de entrada con las columnas 'Local time' convertidas a tipo datetime.
+        Dict: Estructura de datos procesada
+    
+    Example:
+        >>> data = {
+        ...     'EURUSD': {
+        ...         '1M': {
+        ...             'EURUSD_1M_BID.csv': df1,
+        ...             'EURUSD_1M_ASK.csv': df2
+        ...         }
+        ...     }
+        ... }
+        >>> processed_data = datetime_fix(data)
     """
-    # Iterar a través del diccionario
-    for currency_pair, timeframes in dataframes.items():
-        for timeframe, dfs in timeframes.items():
-            for filename, df in dfs.items():
-                # Verificar si la columna "Local time" existe en el DataFrame
-                if 'Local time' in df.columns:
-                    # Transformar la columna "Local time" a tipo datetime
-                    try:
-                        df['Local time'] = pd.to_datetime(df['Local time'], format='%d.%m.%Y %H:%M:%S.%f GMT%z')
-                        # (Opcional) Imprimir un mensaje para verificar la conversión
-                        #print(f"Converted 'Local time' in {filename} under {currency_pair} {timeframe}")
-                    except Exception as e:
-                        print(f"Error converting 'Local time' in {filename} under {currency_pair} {timeframe}: {e}")
-    print('AJuste de fecha completa')
-    return dataframes
+    try:
+        processor = DateTimeProcessor()
+        traverser = DataFrameTraverser(processor)
+        result = traverser.traverse_and_process(dataframes)
+        logger.info("Procesamiento de fechas completado exitosamente")
+        return result
+    except Exception as e:
+        logger.error(f"Error en el procesamiento de fechas: {str(e)}")
+        raise
 
-def dropna_all(dataframes):
-    # Iterar a través del diccionario
-    for currency_pair, timeframes in dataframes.items():
-        for timeframe, dfs in timeframes.items():
-            for filename, df in dfs.items():
-                # Eliminar filas con valores faltantes
-                df_cleaned = df.dropna()
 
-                # (Opcional) Imprimir un mensaje para verificar el cambio
-                #print(f"Dropped NaN values in {filename} under {currency_pair} {timeframe}. Rows before: {len(df)}, Rows after: {len(df_cleaned)}")
+def dropna_all(dataframes: Dict) -> Dict:
+    """
+    Función wrapper para mantener compatibilidad con el código existente.
+    
+    Args:
+        dataframes: Diccionario con la estructura de datos a limpiar
+    
+    Returns:
+        Dict: Estructura de datos limpia
+    """
+    try:
+        cleaner = DataCleaner()
+        
+        # Procesar cada DataFrame en la estructura
+        for currency_pair, timeframes in dataframes.items():
+            for timeframe, dfs in timeframes.items():
+                for filename, df in dfs.items():
+                    path_info = {
+                        'currency_pair': currency_pair,
+                        'timeframe': timeframe,
+                        'filename': filename
+                    }
+                    dfs[filename] = cleaner.clean_dataframe(df, path_info)
+        
+        logger.info("Limpieza de datos completada exitosamente")
+        return dataframes
+    
+    except Exception as e:
+        logger.error(f"Error en la limpieza de datos: {str(e)}")
+        return dataframes  # Retorna los datos originales en caso de error
 
-                # Reemplazar el DataFrame original con el DataFrame limpio
-                dfs[filename] = df_cleaned
-    print('Clear completed')
-    return dataframes
 
 def validate_dataframes(dataframes):
     for currency_pair, timeframes in dataframes.items():
@@ -366,6 +572,8 @@ def validate_dataframes(dataframes):
                             print(f"Error: Column '{col}' in {filename} is not of type float or int.")
     
     print("Validation complete.")
+
+
 # Función principal
 def main():
     # Especifica la ruta a la carpeta que contiene los archivos CSV
