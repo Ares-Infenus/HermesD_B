@@ -2,99 +2,295 @@
 import pandas as pd
 import numpy as np
 import os 
+from pathlib import Path
+from typing import Dict, Union, Optional, Any
+import logging
+from dataclasses import dataclass
+from abc import ABC, abstractmethod
+#==================================# VAR #=====================================#
 
-# Función para importar datos
+# Configuración del logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+class FileImportError(Exception):
+    """Excepción personalizada para errores de importación de archivos."""
+    pass
+
+class DataReader(ABC):
+    """Clase abstracta para lectura de datos siguiendo el principio Open/Closed."""
+    @abstractmethod
+    def can_handle(self, file_path: Path) -> bool:
+        pass
+    
+    @abstractmethod
+    def read(self, file_path: Path) -> pd.DataFrame:
+        pass
+
+class CSVReader(DataReader):
+    """Implementación concreta para leer archivos CSV."""
+    def can_handle(self, file_path: Path) -> bool:
+        return file_path.suffix.lower() == '.csv'
+    
+    def read(self, file_path: Path) -> pd.DataFrame:
+        try:
+            return pd.read_csv(file_path)
+        except Exception as e:
+            raise FileImportError(f"Error al leer el archivo CSV {file_path}: {str(e)}")
+
+@dataclass
+class ImportConfig:
+    """Clase para configuración de importación."""
+    allowed_extensions: tuple = ('.csv',)
+    recursive: bool = True
+    encoding: str = 'utf-8'
+
+class DataImporter:
+    """Clase principal para importación de datos siguiendo el principio Single Responsibility."""
+    
+    def __init__(self, reader: DataReader, config: Optional[ImportConfig] = None):
+        """
+        Inicializa el importador de datos.
+        
+        Args:
+            reader: Implementación de DataReader para leer archivos
+            config: Configuración opcional para la importación
+        """
+        self.reader = reader
+        self.config = config or ImportConfig()
+    
+    def import_data(self, folder_path: Union[str, Path]) -> Dict:
+        """
+        Importa archivos desde una carpeta y sus subcarpetas, preservando la estructura de directorios
+        en un diccionario anidado.
+        
+        Args:
+            folder_path: Ruta a la carpeta principal desde la cual se deben importar los archivos.
+        
+        Returns:
+            Dict: Diccionario anidado que refleja la estructura de carpetas con los datos importados.
+        
+        Raises:
+            FileImportError: Si hay problemas al importar los archivos.
+            ValueError: Si la ruta proporcionada no existe o no es un directorio.
+        
+        Example:
+            >>> importer = DataImporter(CSVReader())
+            >>> data = importer.import_data("ruta/a/carpeta")
+            >>> # Estructura resultante:
+            >>> # {
+            >>> #     'carpeta1': {
+            >>> #         'archivo1.csv': DataFrame,
+            >>> #         'subcarpeta1': {
+            >>> #             'archivo2.csv': DataFrame
+            >>> #         }
+            >>> #     }
+            >>> # }
+        """
+        try:
+            folder_path = Path(folder_path)
+            if not folder_path.exists() or not folder_path.is_dir():
+                raise ValueError(f"La ruta {folder_path} no existe o no es un directorio")
+            
+            return self._process_directory(folder_path)
+            
+        except Exception as e:
+            logger.error(f"Error durante la importación: {str(e)}")
+            raise FileImportError(f"No se pudo completar la importación: {str(e)}")
+    
+    def _process_directory(self, directory: Path) -> Dict:
+        """
+        Procesa recursivamente un directorio y sus contenidos.
+        
+        Args:
+            directory: Ruta del directorio a procesar.
+        
+        Returns:
+            Dict: Estructura de datos con los archivos importados.
+        """
+        result = {}
+        
+        try:
+            for item in directory.iterdir():
+                if item.is_file() and self.reader.can_handle(item):
+                    logger.info(f"Importando archivo: {item}")
+                    result[item.name] = self.reader.read(item)
+                elif item.is_dir() and self.config.recursive:
+                    result[item.name] = self._process_directory(item)
+            
+            return result
+        
+        except Exception as e:
+            logger.error(f"Error procesando directorio {directory}: {str(e)}")
+            raise FileImportError(f"Error en el directorio {directory}: {str(e)}")
+
+@dataclass
+class PrintConfig:
+    """Configuración para el formato de impresión."""
+    indent_size: int = 2
+    branch_vertical: str = "│"
+    branch_horizontal: str = "──"
+    branch_corner: str = "└"
+    branch_tee: str = "├"
+    show_dimensions: bool = True
+    show_datatypes: bool = False
+
+class DataPrinter(ABC):
+    """Clase abstracta para imprimir diferentes tipos de datos."""
+    @abstractmethod
+    def can_handle(self, value: Any) -> bool:
+        pass
+    
+    @abstractmethod
+    def format_output(self, value: Any, config: PrintConfig) -> str:
+        pass
+
+class DataFramePrinter(DataPrinter):
+    """Implementación para imprimir información de DataFrames."""
+    def can_handle(self, value: Any) -> bool:
+        return isinstance(value, pd.DataFrame)
+    
+    def format_output(self, value: pd.DataFrame, config: PrintConfig) -> str:
+        info = f"(DataFrame: {value.shape[0]} filas, {value.shape[1]} columnas"
+        if config.show_datatypes:
+            info += f", dtypes: {', '.join(value.dtypes.astype(str))}"
+        return info + ")"
+
+class TreePrinter:
+    """Clase principal para imprimir estructuras de datos en formato árbol."""
+    
+    def __init__(self, config: PrintConfig = None, data_printers: list[DataPrinter] = None):
+        """
+        Inicializa el impresor de árboles.
+        
+        Args:
+            config: Configuración de formato de impresión
+            data_printers: Lista de impresores para diferentes tipos de datos
+        """
+        self.config = config or PrintConfig()
+        self.data_printers = data_printers or [DataFramePrinter()]
+    
+    def print_tree(self, data: Dict, indent: int = 0, is_last: bool = True, prefix: str = "") -> None:
+        """
+        Imprime la estructura de datos en formato árbol.
+        
+        Args:
+            data: Diccionario o estructura de datos a imprimir
+            indent: Nivel de indentación actual
+            is_last: Indica si es el último elemento en el nivel actual
+            prefix: Prefijo para la línea actual (para mantener las líneas verticales)
+        
+        Raises:
+            ValueError: Si la entrada no es del tipo esperado
+        """
+        try:
+            if not isinstance(data, dict):
+                raise ValueError("Los datos deben ser un diccionario")
+            
+            items = list(data.items())
+            
+            for i, (key, value) in enumerate(items):
+                is_last_item = i == len(items) - 1
+                self._print_node(key, value, indent, is_last_item, prefix)
+                
+        except Exception as e:
+            logger.error(f"Error al imprimir el árbol: {str(e)}")
+            print(f"Error: No se pudo imprimir la estructura completa - {str(e)}")
+    
+    def _print_node(self, key: str, value: Any, indent: int, is_last: bool, prefix: str) -> None:
+        """
+        Imprime un nodo individual del árbol.
+        
+        Args:
+            key: Nombre del nodo
+            value: Valor asociado al nodo
+            indent: Nivel de indentación
+            is_last: Indica si es el último elemento
+            prefix: Prefijo para la línea actual
+        """
+        # Determina los caracteres a usar para las ramas
+        branch = self.config.branch_corner if is_last else self.config.branch_tee
+        
+        # Construye la línea actual
+        current_prefix = prefix + branch + self.config.branch_horizontal
+        print(f"{prefix}{branch}{self.config.branch_horizontal} {key}")
+        
+        # Prepara el prefijo para los elementos hijos
+        new_prefix = prefix
+        if not is_last:
+            new_prefix += self.config.branch_vertical + " " * self.config.indent_size
+        else:
+            new_prefix += " " * (self.config.indent_size + 1)
+        
+        # Procesa el valor según su tipo
+        for printer in self.data_printers:
+            if printer.can_handle(value):
+                print(f"{new_prefix}{printer.format_output(value, self.config)}")
+                return
+        
+        # Si es un diccionario, procesa recursivamente
+        if isinstance(value, dict):
+            self.print_tree(value, indent + self.config.indent_size, True, new_prefix)
+
+
+
+
+#=====================# Funciones principales #==============================#
 def import_data(ruta_carpeta):
     """
-    Importa archivos CSV desde una carpeta y sus subcarpetas, preservando la estructura de directorios
-    en un diccionario anidado. Cada carpeta se convierte en una clave del diccionario y los archivos CSV
-    se cargan como DataFrames de pandas.
-
-    Parámetros:
-    ruta_carpeta (str): La ruta a la carpeta principal desde la cual se deben importar los archivos CSV.
-
-    Retorna:
-    dict: Un diccionario anidado que refleja la estructura de carpetas. Cada subcarpeta se representa como
-          un subdiccionario, y los archivos CSV se almacenan como DataFrames.
-
-    Ejemplo de estructura de salida:
-    {
-        'carpeta1': {
-            'archivo1.csv': DataFrame,
-            'subcarpeta1': {
-                'archivo2.csv': DataFrame
-            }
-        },
-        'carpeta2': {
-            'archivo3.csv': DataFrame
-        }
-    }
-    """
-
-    # Inicializa el diccionario que almacenará la estructura de carpetas y los archivos CSV
-    estructura = {}
+    Función wrapper para mantener compatibilidad con el código existente.
     
-    # Recorre todas las carpetas y archivos en la ruta especificada
-    for root, dirs, files in os.walk(ruta_carpeta):
-        # Obtiene la ruta relativa para identificar en qué nivel de la jerarquía se encuentra cada carpeta
-        ruta_relativa = os.path.relpath(root, ruta_carpeta)
-        
-        # Determina el diccionario actual donde se deben almacenar los archivos y carpetas
-        if ruta_relativa == '.':
-            # Si estamos en la carpeta raíz, usa el diccionario principal
-            current_dict = estructura
-        else:
-            # Si estamos en una subcarpeta, navega hasta el nivel correspondiente en el diccionario
-            current_dict = estructura
-            for part in ruta_relativa.split(os.sep):  # Divide la ruta en cada carpeta
-                if part not in current_dict:
-                    # Si la subcarpeta no existe en el diccionario, crea una nueva clave
-                    current_dict[part] = {}
-                # Avanza al subdiccionario correspondiente
-                current_dict = current_dict[part]
-        
-        # Agrega archivos CSV encontrados en la carpeta actual al diccionario
-        for file in files:
-            if file.endswith(".csv"):  # Verifica que el archivo tenga extensión CSV
-                # Obtiene la ruta completa del archivo
-                file_path = os.path.join(root, file)
-                # Lee el archivo CSV en un DataFrame de pandas y lo almacena en el diccionario actual
-                current_dict[file] = pd.read_csv(file_path)
-
-    return estructura
-
-
-def imprimir_cascada(diccionario, indent=0):
+    Args:
+        folder_path: Ruta a la carpeta principal.
+    
+    Returns:
+        Dict: Estructura de datos con los archivos importados.
     """
-    Imprime la estructura de un diccionario anidado en formato de cascada, simulando una jerarquía de carpetas.
-    Si un valor en el diccionario es un DataFrame de pandas, muestra la cantidad de filas y columnas.
+    try:
+        importer = DataImporter(CSVReader())
+        result = importer.import_data(ruta_carpeta)
+        logger.info("Importación completada exitosamente")
+        return result
+    except Exception as e:
+        logger.error(f"Error en la importación: {str(e)}")
+        raise
 
-    Parámetros:
-    diccionario (dict): El diccionario anidado que contiene la estructura de carpetas y archivos.
-    indent (int): Nivel de indentación actual, usado para controlar el sangrado en la impresión.
-                  Por defecto es 0 y aumenta recursivamente en cada nivel de anidación.
 
-    Ejemplo de estructura de salida:
-    └── carpeta1
-        ├── archivo1.csv
-        │   (DataFrame: 100 filas, 5 columnas)
-        └── subcarpeta1
-            └── archivo2.csv
-                (DataFrame: 200 filas, 3 columnas)
+def imprimir_cascada(diccionario: Dict, indent: int = 0) -> None:
     """
-
-    # Itera a través de las claves y valores en el diccionario
-    for key, value in diccionario.items():
-        # Imprime la clave con un formato en cascada, usando indentación basada en el nivel actual
-        print('    ' * indent + f"└── {key}")
-
-        # Verifica si el valor es un DataFrame
-        if isinstance(value, pd.DataFrame):
-            # Si es un DataFrame, imprime el número de filas y columnas
-            print('    ' * (indent + 1) + f"(DataFrame: {value.shape[0]} filas, {value.shape[1]} columnas)")
-        else:
-            # Si el valor es un subdiccionario, llama a la función de manera recursiva aumentando la indentación
-            imprimir_cascada(value, indent + 1)
+    Función wrapper para mantener compatibilidad con el código existente.
+    
+    Args:
+        diccionario: Diccionario anidado que contiene la estructura
+        indent: Nivel de indentación inicial
+    
+    Example:
+        >>> estructura = {
+        ...     'carpeta1': {
+        ...         'archivo1.csv': pd.DataFrame(...),
+        ...         'subcarpeta1': {
+        ...             'archivo2.csv': pd.DataFrame(...)
+        ...         }
+        ...     }
+        ... }
+        >>> imprimir_cascada(estructura)
+        └── carpeta1
+            ├── archivo1.csv
+            │   (DataFrame: 100 filas, 5 columnas)
+            └── subcarpeta1
+                └── archivo2.csv
+                    (DataFrame: 200 filas, 3 columnas)
+    """
+    try:
+        printer = TreePrinter(PrintConfig(indent_size=indent))
+        printer.print_tree(diccionario)
+        logger.info("Estructura impresa exitosamente")
+    except Exception as e:
+        logger.error(f"Error al imprimir la estructura: {str(e)}")
+        print(f"Error: No se pudo imprimir la estructura - {str(e)}")
 
 def datetime_fix(dataframes):
     """
@@ -128,13 +324,48 @@ def datetime_fix(dataframes):
                     try:
                         df['Local time'] = pd.to_datetime(df['Local time'], format='%d.%m.%Y %H:%M:%S.%f GMT%z')
                         # (Opcional) Imprimir un mensaje para verificar la conversión
-                        print(f"Converted 'Local time' in {filename} under {currency_pair} {timeframe}")
+                        #print(f"Converted 'Local time' in {filename} under {currency_pair} {timeframe}")
                     except Exception as e:
                         print(f"Error converting 'Local time' in {filename} under {currency_pair} {timeframe}: {e}")
-
+    print('AJuste de fecha completa')
     return dataframes
 
+def dropna_all(dataframes):
+    # Iterar a través del diccionario
+    for currency_pair, timeframes in dataframes.items():
+        for timeframe, dfs in timeframes.items():
+            for filename, df in dfs.items():
+                # Eliminar filas con valores faltantes
+                df_cleaned = df.dropna()
 
+                # (Opcional) Imprimir un mensaje para verificar el cambio
+                #print(f"Dropped NaN values in {filename} under {currency_pair} {timeframe}. Rows before: {len(df)}, Rows after: {len(df_cleaned)}")
+
+                # Reemplazar el DataFrame original con el DataFrame limpio
+                dfs[filename] = df_cleaned
+    print('Clear completed')
+    return dataframes
+
+def validate_dataframes(dataframes):
+    for currency_pair, timeframes in dataframes.items():
+        for timeframe, dfs in timeframes.items():
+            for filename, df in dfs.items():
+                # Verificar el número de columnas
+                if df.shape[1] != 6:
+                    print(f"Error: {filename} under {currency_pair} {timeframe} has {df.shape[1]} columns (expected 6).")
+                    continue  # Salta a la siguiente iteración
+
+                # Verificar los tipos de datos
+                if not pd.api.types.is_datetime64_any_dtype(df['Local time']):
+                    print(f"Error: 'Local time' in {filename} is not of type datetime.")
+                
+                # Verificar que las demás columnas sean float o int
+                for col in df.columns:
+                    if col != 'Local time':
+                        if not (pd.api.types.is_float_dtype(df[col]) or pd.api.types.is_integer_dtype(df[col])):
+                            print(f"Error: Column '{col}' in {filename} is not of type float or int.")
+    
+    print("Validation complete.")
 # Función principal
 def main():
     # Especifica la ruta a la carpeta que contiene los archivos CSV
@@ -148,9 +379,13 @@ def main():
 
     #Arreglando la columna Local time de todos los arhivos
     DB = datetime_fix(DB)
-    print(DB['EURUSD']['1M']['EURUSD_1M_BID.csv'])
+    print(DB['EURUSD']['1H']['EURUSD_1H_BID.csv'])
 
-    #
-    
+    #=====================# lIMPIEZA #=====================#
+    #QUitando los datos dropna y faltante
+    DB = dropna_all(DB)
 
+    #=====================# Rectificia y comprobador  #=====================#
+    #vALIDANDO FORMA Y ESENCIA DEL DATAFRAME
+    validate_dataframes(DB)
 main()
