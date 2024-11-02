@@ -710,7 +710,22 @@ class DataFrameValidator:
         logger.error(error_msg)
         self.validation_errors.append(error_msg)
 
+# Función para exportar el diccionario
 
+def export_data_dict(data_dict, base_dir):
+    for pair, timeframes in data_dict.items():
+        for timeframe, datasets in timeframes.items():
+            for dataset_name, df in datasets.items():
+                # Crear la ruta de carpetas
+                folder_path = os.path.join(base_dir, pair, timeframe)
+                os.makedirs(folder_path, exist_ok=True)
+                
+                # Ruta del archivo CSV
+                file_path = os.path.join(folder_path, f"{dataset_name}.csv")
+                
+                # Exportar el DataFrame a CSV
+                df.to_csv(file_path, index=False)
+                print(f"Exportado {dataset_name} a {file_path}")
 def main():
     """
     Función principal para ejecutar el flujo completo de procesamiento de datos:
@@ -733,11 +748,9 @@ def main():
     # 4. Arregla el formato de fecha y hora en la columna 'LOCAL TIME' para todos los archivos en el diccionario
     DB = datetime_fix(DB)
     
-    # ===================== LIMPIEZA ===================== #
     # 5. Limpia los datos eliminando filas con valores nulos o incompletos en todos los DataFrames
     DB = dropna_all(DB)
     
-    # ===================== VALIDACIÓN ===================== #
     # 6. Valida la estructura y consistencia de los DataFrames tras la limpieza y transformación
     validator = DataFrameValidator()
     try:
@@ -747,8 +760,11 @@ def main():
             print("Data validation completed with errors")
     except ValidationError as e:
         print(f"Validation failed: {str(e)}")
-
-    return DB
+    
+    # 7. Exportar  Datos
+    # Directorio base donde se guardarán todas las carpetas
+    base_dir = "/home/KAISER/Documents/HermesD_B/HermesD_B/data/cleaned" 
+    export_data_dict(DB, base_dir)
 # Llama a la función principal
 if __name__ == "__main__":
     main()
