@@ -433,6 +433,17 @@ class DataCleaner:
             logger.error(f"Error en la limpieza del DataFrame: {str(e)}")
             return df  # Retorna el DataFrame original en caso de error
 
+class ValidationError(Exception):
+    """Excepción personalizada para errores de validación."""
+    pass
+
+@dataclass
+class ValidationConfig:
+    """Configuración para la validación de DataFrames."""
+    expected_columns: int = 6
+    datetime_column: str = 'Local time'
+    expected_numeric_types: tuple = (np.float64, np.int64)
+    strict_validation: bool = True
 
 #=====================# Funciones principales #==============================#
 def import_data(ruta_carpeta):
@@ -552,26 +563,152 @@ def dropna_all(dataframes: Dict) -> Dict:
         return dataframes  # Retorna los datos originales en caso de error
 
 
-def validate_dataframes(dataframes):
-    for currency_pair, timeframes in dataframes.items():
-        for timeframe, dfs in timeframes.items():
-            for filename, df in dfs.items():
-                # Verificar el número de columnas
-                if df.shape[1] != 6:
-                    print(f"Error: {filename} under {currency_pair} {timeframe} has {df.shape[1]} columns (expected 6).")
-                    continue  # Salta a la siguiente iteración
-
-                # Verificar los tipos de datos
-                if not pd.api.types.is_datetime64_any_dtype(df['Local time']):
-                    print(f"Error: 'Local time' in {filename} is not of type datetime.")
-                
-                # Verificar que las demás columnas sean float o int
-                for col in df.columns:
-                    if col != 'Local time':
-                        if not (pd.api.types.is_float_dtype(df[col]) or pd.api.types.is_integer_dtype(df[col])):
-                            print(f"Error: Column '{col}' in {filename} is not of type float or int.")
+class DataFrameValidator:
+    """
+    Clase para validación de DataFrames siguiendo el principio Single Responsibility.
+    """
     
-    print("Validation complete.")
+    def __init__(self, config: Optional[ValidationConfig] = None):
+        """
+        Inicializa el validador con una configuración específica.
+        
+        Args:
+            config: Configuración de validación opcional
+        """
+        self.config = config or ValidationConfig()
+        self.validation_errors = []
+    
+    def validate_dataframes(self, dataframes: Dict) -> bool:
+        """
+        Valida la estructura y tipos de datos de los DataFrames en la jerarquía proporcionada.
+        
+        Args:
+            dataframes: Diccionario jerárquico de DataFrames organizados por par de divisas y timeframe
+        
+        Returns:
+            bool: True si la validación es exitosa, False si hay errores
+        
+        Raises:
+            ValidationError: Si hay errores de validación en modo estricto
+        
+        Example:
+            >>> validator = DataFrameValidator()
+            >>> try:
+            ...     is_valid = validator.validate_dataframes(dataframes)
+            ...     if is_valid:
+            ...         print("Validation successful")
+            ... except ValidationError as e:
+            ...     print(f"Validation failed: {str(e)}")
+        """
+        try:
+            validation_successful = True
+            total_files = 0
+            error_count = 0
+            
+            logger.info("Starting DataFrame validation process...")
+            
+            for currency_pair, timeframes in dataframes.items():
+                for timeframe, dfs in timeframes.items():
+                    for filename, df in dfs.items():
+                        total_files += 1
+                        file_context = {
+                            'currency_pair': currency_pair,
+                            'timeframe': timeframe,
+                            'filename': filename
+                        }
+                        
+                        if not self._validate_single_dataframe(df, file_context):
+                            validation_successful = False
+                            error_count += 1
+            
+            # Log resultados finales
+            if validation_successful:
+                logger.info(f"Validation completed successfully. {total_files} files validated.")
+            else:
+                error_msg = f"Validation completed with {error_count} errors in {total_files} files."
+                logger.error(error_msg)
+                if self.config.strict_validation:
+                    raise ValidationError(error_msg)
+            
+            return validation_successful
+            
+        except Exception as e:
+            logger.error(f"Unexpected error during validation: {str(e)}")
+            raise ValidationError(f"Validation process failed: {str(e)}")
+    
+    def _validate_single_dataframe(self, df: pd.DataFrame, context: Dict[str, str]) -> bool:
+        """
+        Valida un único DataFrame.
+        
+        Args:
+            df: DataFrame a validar
+            context: Información contextual del archivo
+        
+        Returns:
+            bool: True si la validación es exitosa, False si hay errores
+        """
+        is_valid = True
+        
+        # Validar número de columnas
+        if df.shape[1] != self.config.expected_columns:
+            self._log_validation_error(
+                f"{context['filename']} under {context['currency_pair']} {context['timeframe']} "
+                f"has {df.shape[1]} columns (expected {self.config.expected_columns}).",
+                context
+            )
+            is_valid = False
+        
+        # Validar tipo de fecha/hora
+        try:
+            if not pd.api.types.is_datetime64_any_dtype(df[self.config.datetime_column]):
+                self._log_validation_error(
+                    f"'{self.config.datetime_column}' in {context['filename']} is not of type datetime.",
+                    context
+                )
+                is_valid = False
+        except KeyError:
+            self._log_validation_error(
+                f"Required column '{self.config.datetime_column}' not found in {context['filename']}.",
+                context
+            )
+            is_valid = False
+        
+        # Validar columnas numéricas
+        for col in df.columns:
+            if col != self.config.datetime_column:
+                if not self._is_numeric_type(df[col]):
+                    self._log_validation_error(
+                        f"Column '{col}' in {context['filename']} is not of type float or int.",
+                        context
+                    )
+                    is_valid = False
+        
+        return is_valid
+    
+    def _is_numeric_type(self, series: pd.Series) -> bool:
+        """
+        Verifica si una serie es de tipo numérico.
+        
+        Args:
+            series: Serie de pandas a verificar
+        
+        Returns:
+            bool: True si es numérica, False en caso contrario
+        """
+        return (pd.api.types.is_float_dtype(series) or 
+                pd.api.types.is_integer_dtype(series))
+    
+    def _log_validation_error(self, message: str, context: Dict[str, str]) -> None:
+        """
+        Registra un error de validación.
+        
+        Args:
+            message: Mensaje de error
+            context: Información contextual del error
+        """
+        error_msg = f"Validation Error in {context['currency_pair']}/{context['timeframe']}: {message}"
+        logger.error(error_msg)
+        self.validation_errors.append(error_msg)
 
 
 def main():
@@ -602,7 +739,14 @@ def main():
     
     # ===================== VALIDACIÓN ===================== #
     # 6. Valida la estructura y consistencia de los DataFrames tras la limpieza y transformación
-    validate_dataframes(DB)
+    validator = DataFrameValidator()
+    try:
+        if validator.validate_dataframes(DB):
+            print("Data validation completed successfully")
+        else:
+            print("Data validation completed with errors")
+    except ValidationError as e:
+        print(f"Validation failed: {str(e)}")
 
     return DB
 # Llama a la función principal
