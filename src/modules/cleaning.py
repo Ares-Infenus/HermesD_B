@@ -574,26 +574,37 @@ def validate_dataframes(dataframes):
     print("Validation complete.")
 
 
-# Función principal
 def main():
-    # Especifica la ruta a la carpeta que contiene los archivos CSV
+    """
+    Función principal para ejecutar el flujo completo de procesamiento de datos:
+    1. Importación de datos desde archivos CSV.
+    2. Estructuración y visualización de la arquitectura de datos.
+    3. Corrección de formatos de fecha y hora.
+    4. Limpieza de datos, eliminando valores nulos y entradas faltantes.
+    5. Validación de la estructura y consistencia de los DataFrames.
+    """
+    
+    # 1. Especifica la ruta de la carpeta que contiene los archivos CSV de datos
     ruta_carpeta = "/home/KAISER/Documents/HermesD_B/HermesD_B/data/raw"
     
-    # Importamos las bases de datos
+    # 2. Importa los archivos CSV en un diccionario de DataFrames organizados por divisa y temporalidad
     DB = import_data(ruta_carpeta)
     
-    # Imprimir la arquitectura del diccionario como cascada
+    # 3. Imprime la estructura del diccionario de datos en forma de cascada para una mejor visualización
     imprimir_cascada(DB)
-
-    #Arreglando la columna Local time de todos los arhivos
+    
+    # 4. Arregla el formato de fecha y hora en la columna 'LOCAL TIME' para todos los archivos en el diccionario
     DB = datetime_fix(DB)
-    print(DB['EURUSD']['1H']['EURUSD_1H_BID.csv'])
-
-    #=====================# lIMPIEZA #=====================#
-    #QUitando los datos dropna y faltante
+    
+    # ===================== LIMPIEZA ===================== #
+    # 5. Limpia los datos eliminando filas con valores nulos o incompletos en todos los DataFrames
     DB = dropna_all(DB)
-
-    #=====================# Rectificia y comprobador  #=====================#
-    #vALIDANDO FORMA Y ESENCIA DEL DATAFRAME
+    
+    # ===================== VALIDACIÓN ===================== #
+    # 6. Valida la estructura y consistencia de los DataFrames tras la limpieza y transformación
     validate_dataframes(DB)
-main()
+
+    return DB
+# Llama a la función principal
+if __name__ == "__main__":
+    main()

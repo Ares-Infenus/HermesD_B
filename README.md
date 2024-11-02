@@ -55,7 +55,7 @@ Estructura de carpetas
 │
 ├── /notebooks             # Jupyter notebooks para análisis y limpieza exploratoria
 │
-├── /scripts               # Scripts de Python para limpieza y transformación de datos
+├── /scr               # Scripts de Python para limpieza y transformación de datos
 │   ├── data_cleaning.py   # Script principal de limpieza de datos
 │   ├── data_transformation.py  # Script para transformar datos si es necesario
 │   └── utils.py           # Funciones utilitarias que se pueden reutilizar
@@ -77,3 +77,29 @@ Estructura de carpetas
 │   └── process_log.log      # Registro de la limpieza de datos y errores
 │
 └── README.md               # Documentación del proyecto
+
+
+Registro de Actualizaciones del Proyecto
+
+    0.1: Creación de funciones de limpieza de datos.
+    0.2: Implementación de cálculo y recorte de datos.
+    0.3: Migración de datos desde archivos CSV a Oracle SQL.
+    0.4: Desarrollo de funciones de verificación y manejo de errores para mejorar la legibilidad del código.
+    0.5: Carga del 60% de los datos.
+    0.8: Carga del 70% de los datos.
+    1.3: Carga del 80% de los datos.
+    2.1: Carga del 90% de los datos.
+    3.4: Carga completa del 100% de los datos.
+    5.5: Creación de documentación en formato .docx.
+    8.9: Generación de documentación en formato .txt.
+    14.4: Desarrollo del módulo de instalación del proyecto.
+    23.3: Creación del módulo de licencia de software.
+
+Lanzamiento de la Versión Final
+
+    1.0.0: Redacción profesional del README y finalización del proyecto.
+
+Nuevas Características en Desarrollo
+
+    2.0: Reducción de datos a intervalos de 30, 15, 5 y 1 minuto.
+    3.0: Incorporación de precios para las 20 principales acciones del mercado.
