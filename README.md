@@ -103,3 +103,31 @@ Nuevas Características en Desarrollo
 
     2.0: Reducción de datos a intervalos de 30, 15, 5 y 1 minuto.
     3.0: Incorporación de precios para las 20 principales acciones del mercado.
+
+
+    Para este flujo de trabajo, varios principios y buenas prácticas pueden ayudarte a mantener tu proyecto organizado, modular y escalable:
+1. ETL (Extract, Transform, Load)
+
+    Este proceso es clave para manejar la extracción de datos, limpieza y transformación antes de cargarlos en tu base de datos. Puedes aplicar patrones y principios que favorecen la modularidad, como KISS (mantener cada fase lo más simple posible) y DRY (evitar repetir pasos o procesos en la limpieza o transformación).
+
+2. SOLID en el Cálculo de Métricas en Python
+
+    Si calculas métricas personalizadas o agregaciones, SOLID te será útil para estructurar funciones o clases que mantengan responsabilidades separadas. Por ejemplo, puedes aplicar el Principio de Responsabilidad Única creando funciones independientes para cada métrica.
+    Esto también facilita la prueba de cada métrica de forma aislada, por lo que TDD puede ser una excelente práctica aquí. Escribir primero las pruebas para cada cálculo ayuda a validar que las métricas funcionan correctamente y son consistentes.
+
+3. Uso de un ORM (Object-Relational Mapping) para la Carga en Oracle
+
+    Para transformar y cargar los datos en Oracle, un ORM como SQLAlchemy puede ser útil. Los ORMs te permiten definir modelos de datos en Python que representan tablas de la base de datos, facilitando la actualización y mantenibilidad del esquema. Esto también sigue el principio de DRY, ya que reduces código SQL repetitivo y centralizas la lógica de acceso a datos.
+
+4. API REST y Principios de Buen Diseño
+
+    Al implementar la API, SOLID te ayudará a diseñar controladores y servicios que mantengan sus responsabilidades separadas, lo cual facilita la extensión.
+    Puedes seguir principios de 12-Factor App si decides desplegar tu API en la nube o en contenedores para asegurar que sea escalable y fácil de mantener.
+    CQRS también puede ser útil si tienes operaciones de lectura y escritura muy distintas. Puedes separarlas en métodos específicos para mejorar la eficiencia y facilitar la escalabilidad.
+
+5. Optimización y Buenas Prácticas
+
+    La Ley de Demeter puede ayudarte a evitar dependencias innecesarias en los datos al manipular los objetos directamente relacionados con la funcionalidad principal de tu API o lógica de negocio.
+    Documentación y Pruebas: Como has mencionado que te interesa la documentación y las buenas prácticas, crear una documentación de API completa (como Swagger) y agregar pruebas unitarias y de integración contribuirán a la confiabilidad del sistema.
+
+Este enfoque modular y organizado garantiza que puedas escalar y extender tu proyecto con mayor facilidad en el futuro.
