@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from enum import Enum
 import argparse
 import sys
+from datetime import datetime
+
 
 
 # Configuración de logging
@@ -257,7 +259,125 @@ def imprimir_estructura(
     except (TypeError, AttributeError) as e:
         raise ValueError(f"Diccionario inválido: {e}")
 
+#########################################################################################################################
 
+class DataFrameProcessor:
+    """Clase para procesar DataFrames"""
+    
+    def __init__(self):
+        self.logger = logging.getLogger(self.__class__.__name__)
+        
+    def _try_datetime_formats(self, series: pd.Series) -> pd.Series:
+        """
+        Intenta diferentes formatos de fecha hasta encontrar uno que funcione.
+        
+        Args:
+            series: Serie de pandas con las fechas en formato string
+            
+        Returns:
+            pd.Series: Serie con las fechas convertidas a datetime
+        """
+        # Lista de formatos a probar
+        formatos = [
+            '%d.%m.%Y %H:%M:%S.%f',     # Sin zona horaria
+            '%d.%m.%Y %H:%M:%S',         # Sin milisegundos
+            '%Y-%m-%d %H:%M:%S.%f',      # Formato alternativo
+            '%Y-%m-%d %H:%M:%S',         # Formato simple
+            '%d.%m.%Y %H:%M:%S.%f %Z',   # Solo nombre de zona
+            '%d.%m.%Y %H:%M:%S.%f %z'    # Solo offset
+        ]
+        
+        for formato in formatos:
+            try:
+                return pd.to_datetime(series, format=formato)
+            except ValueError:
+                continue
+                
+        # Si ningún formato funciona, intentar el parsing automático
+        try:
+            return pd.to_datetime(series)
+        except Exception as e:
+            self.logger.error(f"No se pudo convertir la fecha: {str(e)}")
+            return pd.to_datetime(series, errors='coerce')
+
+    def convertir_local_time(self, 
+                           dataframes: Dict[str, Dict[str, pd.DataFrame]]) -> Dict[str, Dict[str, pd.DataFrame]]:
+        """
+        Convierte la columna 'Local time' de los DataFrames a tipo datetime.
+        
+        Args:
+            dataframes: Diccionario de DataFrames importados
+            
+        Returns:
+            Dict: Diccionario con los DataFrames procesados
+        """
+        processed_data = {}
+        conversion_stats = {
+            'procesados': 0,
+            'exitosos': 0,
+            'fallidos': 0,
+            'errores': []
+        }
+        
+        for carpeta, archivos in dataframes.items():
+            processed_data[carpeta] = {}
+            
+            for nombre_archivo, df in archivos.items():
+                conversion_stats['procesados'] += 1
+                df_procesado = df.copy()
+                
+                if 'Local time' in df_procesado.columns:
+                    try:
+                        # Intentar conversión con múltiples formatos
+                        df_procesado['Local time'] = self._try_datetime_formats(df_procesado['Local time'])
+                        
+                        # Verificar valores NaT
+                        nat_count = df_procesado['Local time'].isna().sum()
+                        total_rows = len(df_procesado)
+                        
+                        if nat_count > 0:
+                            self.logger.warning(
+                                f"{nat_count}/{total_rows} valores no convertidos en {carpeta}/{nombre_archivo}"
+                            )
+                            
+                        if nat_count < total_rows:  # Si al menos algunos valores se convirtieron
+                            conversion_stats['exitosos'] += 1
+                            self.logger.info(
+                                f"Convertida columna 'Local time' en {carpeta}/{nombre_archivo}"
+                                f" ({total_rows - nat_count}/{total_rows} valores válidos)"
+                            )
+                        else:
+                            conversion_stats['fallidos'] += 1
+                            error_msg = f"Ningún valor pudo ser convertido en {carpeta}/{nombre_archivo}"
+                            conversion_stats['errores'].append(error_msg)
+                            self.logger.error(error_msg)
+                            
+                    except Exception as e:
+                        conversion_stats['fallidos'] += 1
+                        error_msg = f"Error en {carpeta}/{nombre_archivo}: {str(e)}"
+                        conversion_stats['errores'].append(error_msg)
+                        self.logger.error(error_msg)
+                        
+                processed_data[carpeta][nombre_archivo] = df_procesado
+                
+        # Registrar estadísticas finales
+        self.logger.info(f"""
+            Procesamiento completado:
+            - Total procesados: {conversion_stats['procesados']}
+            - Exitosos: {conversion_stats['exitosos']}
+            - Fallidos: {conversion_stats['fallidos']}
+        """)
+        
+        if conversion_stats['errores']:
+            self.logger.warning("Errores encontrados durante la conversión:")
+            for error in conversion_stats['errores'][:5]:  # Mostrar solo los primeros 5 errores
+                self.logger.warning(error)
+            if len(conversion_stats['errores']) > 5:
+                self.logger.warning(f"... y {len(conversion_stats['errores']) - 5} errores más")
+                
+        return processed_data
+
+######################################################################################################################
 
 @dataclass
 class AppConfig:
@@ -266,13 +386,15 @@ class AppConfig:
     log_file: Optional[Path] = None
     verbose: bool = False
     show_structure: bool = True
+    datetime_format: str = '%d.%m.%Y %H:%M:%S.%f %Z%z'
 
 class Interface:
     """Interfaz principal de la aplicación"""
     
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
-        
+        self.processor = DataFrameProcessor()
+
     @staticmethod
     def _configurar_argumentos() -> argparse.Namespace:
         """Configura y parsea los argumentos de línea de comandos"""
@@ -299,6 +421,12 @@ class Interface:
             '--no-structure', 
             action='store_true',
             help='No mostrar la estructura de archivos'
+        )
+        parser.add_argument(
+            '--datetime-format',
+            type=str,
+            default='%d.%m.%Y %H:%M:%S.%f %Z%z',
+            help='Formato de fecha y hora para la conversión'
         )
         return parser.parse_args()
 
@@ -337,6 +465,22 @@ class Interface:
         print("\n📂 Archivos por carpeta:")
         for carpeta, cantidad in stats['archivos_por_carpeta'].items():
             print(f"  {carpeta or '.'}: {cantidad} archivos")
+    
+    
+    def _procesar_datos(self, datos: Dict[str, Dict[str, pd.DataFrame]]) -> Dict[str, Dict[str, pd.DataFrame]]:
+        """Procesa los datos importados aplicando las transformaciones necesarias"""
+        try:
+            self.logger.info("Iniciando procesamiento de datos...")
+            
+            # Convertir columnas de tiempo
+            datos_procesados = self.processor.convertir_local_time(datos)
+            
+            self.logger.info("Procesamiento de datos completado")
+            return datos_procesados
+            
+        except Exception as e:
+            self.logger.error(f"Error durante el procesamiento de datos: {str(e)}")
+            raise
 
     @staticmethod
     def main() -> int:
@@ -375,6 +519,9 @@ class Interface:
             # Crear y ejecutar importador
             importador = ImportadorCSV(config.input_path, import_config)
             datos = importador.importar()
+
+            # Procesar datos
+            datos_procesados = interface._procesar_datos(datos)
 
             # Mostrar resultados
             stats = importador.obtener_estadisticas()
