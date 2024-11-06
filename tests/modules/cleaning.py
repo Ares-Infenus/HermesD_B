@@ -1082,18 +1082,12 @@ class Interface:
 
     @staticmethod
     def main() -> int:
-        """
-        Punto de entrada principal de la aplicación
-        
-        Returns:
-            int: Código de salida (0 para éxito, otro valor para error)
-        """
         interface = Interface()
-        
+
         try:
             # Parsear argumentos
             args = interface._configurar_argumentos()
-            
+
             # Crear configuración de la aplicación
             config = AppConfig(
                 input_path=Path(args.path),
@@ -1106,13 +1100,13 @@ class Interface:
                 export_max_workers=args.export_workers,
                 export_verify=not args.no_verify_exports
             )
-            
+
             # Configurar logging
             interface._configurar_logging(config)
             interface._configurar_exportador(config)
 
             interface.logger.info(f"Iniciando importación desde {config.input_path}")
-            
+
             # Configuración del importador
             import_config = ImportConfig(
                 encoding='utf-8',
@@ -1129,27 +1123,29 @@ class Interface:
             # Mostrar resultados
             stats = importador.obtener_estadisticas()
             interface._mostrar_estadisticas(stats)
-            
+
             # Mostrar estructura si está habilitado
             if config.show_structure:
                 print("\n=== Estructura de Archivos ===")
                 imprimir_estructura(datos_procesados)
-            
+
             # Exportar datos
             interface._exportar_datos(datos_procesados, config.output_path)
 
             interface.logger.info("Proceso completado exitosamente")
             return 0
 
-        except ImportError as e:
-            interface.logger.error(f"Error de importación: {e}")
+        except (ImportError, ExportError) as e:
+            interface.logger.error(f"Error durante la importación o exportación: {e}")
             return 1
+        except Exception as e:
+            interface.logger.error(f"Error inesperado: {e}")
+            raise # Re-raise the exception to stop the program
         except KeyboardInterrupt:
             interface.logger.info("Proceso interrumpido por el usuario")
             return 130
-        except Exception as e:
-            interface.logger.exception(f"Error inesperado: {e}")
-            return 1
+
 
 if __name__ == "__main__":
     sys.exit(Interface.main())
+
