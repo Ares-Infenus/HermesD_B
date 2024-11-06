@@ -3,14 +3,16 @@ import numpy as np
 import os
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List,Union
 from dataclasses import dataclass
 from enum import Enum
 import argparse
 import sys
 from datetime import datetime
-
-
+from enum import Enum
+import shutil
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Configuración de logging
 logging.basicConfig(
@@ -279,12 +281,22 @@ class DataFrameProcessor:
         """
         # Lista de formatos a probar
         formatos = [
-            '%d.%m.%Y %H:%M:%S.%f',     # Sin zona horaria
-            '%d.%m.%Y %H:%M:%S',         # Sin milisegundos
-            '%Y-%m-%d %H:%M:%S.%f',      # Formato alternativo
-            '%Y-%m-%d %H:%M:%S',         # Formato simple
-            '%d.%m.%Y %H:%M:%S.%f %Z',   # Solo nombre de zona
-            '%d.%m.%Y %H:%M:%S.%f %z'    # Solo offset
+        '%d.%m.%Y %H:%M:%S.%f GMT%z',    # Formato con milisegundos y zona horaria
+        '%d.%m.%Y %H:%M:%S GMT%z',       # Formato sin milisegundos pero con zona horaria
+        '%d.%m.%Y %H:%M:%S.%f',          # Sin zona horaria
+        '%d.%m.%Y %H:%M:%S',             # Sin zona horaria ni milisegundos
+        '%Y-%m-%d %H:%M:%S.%f GMT%z',    # Formato alternativo con zona horaria
+        '%Y-%m-%d %H:%M:%S GMT%z',       # Formato alternativo sin milisegundos
+        '%d.%m.%Y %H:%M:%S.%f',
+        '%d.%m.%Y %H:%M:%S',
+        '%Y-%m-%d %H:%M:%S.%f',
+        '%Y-%m-%d %H:%M:%S',
+        '%d.%m.%Y %H:%M:%S.%f %Z',
+        '%d.%m.%Y %H:%M:%S.%f %z',
+        '%Y-%m-%d %H:%M:%S %Z',
+        '%Y-%m-%d %H:%M:%S %z',
+        '%Y-%m-%d %H:%M:%S.%f %z',  # Con microsegundos y offset
+        '%Y-%m-%d %H:%M:%S %Z'      # Con nombre de zona horaria
         ]
         
         for formato in formatos:
@@ -528,28 +540,385 @@ def validate_and_report(data_dict: Dict[str, Dict[str, pd.DataFrame]]) -> None:
     except Exception as e:
         print(f"Error inesperado durante la validación: {str(e)}")
 ###################################################################################################################
+class ExportError(Exception):
+    """Base class for export-related exceptions"""
+    pass
+
+class FileSystemError(ExportError):
+    """Raised when there are filesystem-related issues"""
+    pass
+
+class DataFrameError(ExportError):
+    """Raised when there are DataFrame-related issues"""
+    pass
+
+@dataclass
+class ExportMetrics:
+    """Tracks metrics during the export process"""
+    total_files: int = 0
+    successful_exports: int = 0
+    failed_exports: int = 0
+    total_bytes: int = 0
+    start_time: float = 0.0
+    end_time: float = 0.0
+
+    @property
+    def duration(self) -> float:
+        """Returns the total duration of the export operation"""
+        if self.end_time and self.start_time:
+            return self.end_time - self.start_time
+        return 0.0
+
+    @property
+    def success_rate(self) -> float:
+        """Returns the percentage of successful exports"""
+        if self.total_files == 0:
+            return 0.0
+        return (self.successful_exports / self.total_files) * 100
+
+class ExportFormat(Enum):
+    """Supported export formats"""
+    CSV = "csv"
+    PARQUET = "parquet"
+    EXCEL = "xlsx"
+
+@dataclass
+class ExportConfig:
+    """Configuration for the export process"""
+    format: ExportFormat = ExportFormat.CSV
+    chunk_size: Optional[int] = None
+    compression: Optional[str] = None
+    encoding: str = 'utf-8'
+    date_format: str = '%Y-%m-%d %H:%M:%S'
+    max_workers: int = 4
+    buffer_size: int = 8192  # 8KB buffer for file operations
+    verify_exports: bool = True
+    max_retries: int = 3
+    retry_delay: float = 1.0  # seconds
+
+class DataDictionaryExporter:
+    """
+    A robust exporter for hierarchical data dictionaries containing DataFrames.
+    
+    This class implements NASA's reliability principles and SOLID design patterns:
+    - Single Responsibility: Focuses solely on exporting data
+    - Open/Closed: Easily extensible for new export formats
+    - Liskov Substitution: Uses proper inheritance for error handling
+    - Interface Segregation: Clean, focused interface
+    - Dependency Inversion: Configurable through ExportConfig
+    
+    Key features:
+    - Robust error handling with retries
+    - Concurrent exports for performance
+    - Progress tracking and metrics
+    - Data verification
+    - Resource cleanup
+    """
+    
+    def __init__(self, config: ExportConfig):
+        """
+        Initialize the exporter with configuration
+        
+        Args:
+            config: ExportConfig object containing export parameters
+        """
+        self.config = config
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.metrics = ExportMetrics()
+        
+    def _verify_dataframe_export(self, df: pd.DataFrame, export_path: Path) -> bool:
+        """
+        Verifies that a DataFrame was correctly exported
+        
+        Args:
+            df: Original DataFrame
+            export_path: Path to exported file
+            
+        Returns:
+            bool: True if verification passes
+        """
+        try:
+            if self.config.format == ExportFormat.CSV:
+                df_verify = pd.read_csv(export_path, encoding=self.config.encoding)
+            elif self.config.format == ExportFormat.PARQUET:
+                df_verify = pd.read_parquet(export_path)
+            elif self.config.format == ExportFormat.EXCEL:
+                df_verify = pd.read_excel(export_path)
+                
+            # Verify row count and column names match
+            if len(df) != len(df_verify) or not all(df.columns == df_verify.columns):
+                return False
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Verification failed for {export_path}: {str(e)}")
+            return False
+
+    def _export_dataframe(self, df: pd.DataFrame, path: Path, retries: int = 0) -> bool:
+        """
+        Exports a single DataFrame with retry logic
+        
+        Args:
+            df: DataFrame to export
+            path: Export path
+            retries: Current retry count
+            
+        Returns:
+            bool: True if export was successful
+            
+        Raises:
+            DataFrameError: If export fails after all retries
+        """
+        try:
+            if self.config.format == ExportFormat.CSV:
+                df.to_csv(
+                    path,
+                    index=False,
+                    encoding=self.config.encoding,
+                    date_format=self.config.date_format,
+                    chunksize=self.config.chunk_size
+                )
+            elif self.config.format == ExportFormat.PARQUET:
+                df.to_parquet(
+                    path,
+                    compression=self.config.compression
+                )
+            elif self.config.format == ExportFormat.EXCEL:
+                df.to_excel(
+                    path,
+                    index=False,
+                    date_format=self.config.date_format
+                )
+                
+            if self.config.verify_exports and not self._verify_dataframe_export(df, path):
+                raise DataFrameError("Export verification failed")
+                
+            return True
+            
+        except Exception as e:
+            if retries < self.config.max_retries:
+                self.logger.warning(f"Export attempt {retries + 1} failed for {path}: {str(e)}")
+                time.sleep(self.config.retry_delay)
+                return self._export_dataframe(df, path, retries + 1)
+            raise DataFrameError(f"Failed to export {path} after {retries} retries: {str(e)}")
+
+    def _process_dict_item(self, value: Any, current_path: Path, key: str) -> None:
+        """
+        Processes a single dictionary item for export
+        
+        Args:
+            value: The value to process (DataFrame or dict)
+            current_path: Current directory path
+            key: Dictionary key being processed
+        """
+        try:
+            if isinstance(value, pd.DataFrame):
+                export_path = current_path / f"{key}.{self.config.format.value}"
+                if self._export_dataframe(value, export_path):
+                    self.metrics.successful_exports += 1
+                    self.metrics.total_bytes += export_path.stat().st_size
+            elif isinstance(value, dict):
+                new_path = current_path / key
+                self._recursive_export(value, new_path)
+            else:
+                self.logger.warning(
+                    f"Skipping '{key}': not a DataFrame or dict. "
+                    f"Type: {type(value)}"
+                )
+                
+        except Exception as e:
+            self.metrics.failed_exports += 1
+            self.logger.error(f"Error processing {key}: {str(e)}")
+            raise
+
+    def _recursive_export(self, current_dict: Dict, current_path: Path) -> None:
+        """
+        Recursively exports dictionary contents
+        
+        Args:
+            current_dict: Dictionary to process
+            current_path: Current directory path
+        """
+        try:
+            current_path.mkdir(parents=True, exist_ok=True)
+            
+            with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
+                futures = {
+                    executor.submit(
+                        self._process_dict_item, value, current_path, key
+                    ): key 
+                    for key, value in current_dict.items()
+                }
+                
+                for future in as_completed(futures):
+                    key = futures[future]
+                    try:
+                        future.result()
+                    except Exception as e:
+                        self.logger.error(f"Failed to process {key}: {str(e)}")
+                        
+        except Exception as e:
+            raise FileSystemError(f"Error accessing directory {current_path}: {str(e)}")
+
+    def export(self, data_dict: Dict, base_dir: Union[str, Path]) -> ExportMetrics:
+        """
+        Exports a hierarchical dictionary of DataFrames to files
+        
+        Args:
+            data_dict: Dictionary containing DataFrames
+            base_dir: Base directory for export
+            
+        Returns:
+            ExportMetrics: Export operation metrics
+            
+        Raises:
+            ExportError: If export operation fails
+        """
+        try:
+            base_path = Path(base_dir)
+            self.metrics = ExportMetrics()
+            self.metrics.start_time = time.time()
+            
+            # Clean up existing directory if needed
+            if base_path.exists():
+                shutil.rmtree(base_path)
+                
+            self._recursive_export(data_dict, base_path)
+            
+            self.metrics.end_time = time.time()
+            self.logger.info(self._format_metrics())
+            return self.metrics
+            
+        except Exception as e:
+            self.logger.error(f"Export failed: {str(e)}")
+            raise ExportError(f"Export operation failed: {str(e)}")
+        
+    def _format_metrics(self) -> str:
+        """Formats metrics for logging"""
+        return f"""
+        Export completed:
+        - Duration: {self.metrics.duration:.2f} seconds
+        - Files: {self.metrics.total_files}
+        - Successful: {self.metrics.successful_exports}
+        - Failed: {self.metrics.failed_exports}
+        - Success rate: {self.metrics.success_rate:.1f}%
+        - Total size: {self.metrics.total_bytes / 1024 / 1024:.2f} MB
+        """
+
+# Integration with Interface class
+def add_exporter_to_interface(interface_class: type) -> type:
+    """
+    Adds DataDictionaryExporter functionality to the Interface class
+    
+    Args:
+        interface_class: The Interface class to modify
+        
+    Returns:
+        type: Modified Interface class
+    """
+    original_init = interface_class.__init__
+    
+    def new_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        self.dict_exporter = DataDictionaryExporter(
+            ExportConfig(
+                format=ExportFormat.CSV,
+                max_workers=4,
+                verify_exports=True
+            )
+        )
+    
+    def export_data_dict(self, data_dict: Dict, output_dir: Union[str, Path]) -> ExportMetrics:
+        """
+        Exports data dictionary using the enhanced exporter
+        
+        Args:
+            data_dict: Dictionary of DataFrames to export
+            output_dir: Output directory
+            
+        Returns:
+            ExportMetrics: Export operation metrics
+        """
+        try:
+            return self.dict_exporter.export(data_dict, output_dir)
+        except ExportError as e:
+            self.logger.error(f"Export failed: {str(e)}")
+            raise
+    
+    interface_class.__init__ = new_init
+    interface_class.export_data_dict = export_data_dict
+    return interface_class
+###################################################################################################################
 @dataclass
 class AppConfig:
     """Configuración global de la aplicación"""
     input_path: Path
+    output_path: Path = Path('/home/KAISER/Documents/HermesD_B/HermesD_B/data/cleaned')
     log_file: Optional[Path] = None
     verbose: bool = False
     show_structure: bool = True
     datetime_format: str = '%d.%m.%Y %H:%M:%S.%f %Z%z'
+    export_format: ExportFormat = ExportFormat.CSV
+    export_chunk_size: Optional[int] = None
+    export_compression: Optional[str] = None
+    export_max_workers: int = 4
+    export_verify: bool = True
 
 class Interface:
     """Interfaz principal de la aplicación"""
     
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
-        #self.csv_validator = validate_dataframes_structure()
         self.processor = DataFrameProcessor()
+
+        # Inicializar el exportador con configuración por defecto
+        self.exporter = DataDictionaryExporter(
+            ExportConfig(
+                format=ExportFormat.CSV,
+                max_workers=4,
+                verify_exports=True,
+                chunk_size=None,
+                compression=None,
+                encoding='utf-8',
+                date_format='%Y-%m-%d %H:%M:%S'
+            )
+        )
 
     @staticmethod
     def _configurar_argumentos() -> argparse.Namespace:
         """Configura y parsea los argumentos de línea de comandos"""
         parser = argparse.ArgumentParser(
-            description='Importador de archivos CSV con estructura jerárquica'
+            description='Importador y exportador de archivos con estructura jerárquica'
+        )
+        parser.add_argument(
+            '--output',
+            type=str,
+            default="/home/KAISER/Documents/HermesD_B/HermesD_B/data/cleaned",
+            help='Ruta de salida para los archivos exportados'
+        )
+        parser.add_argument(
+            '--export-format',
+            type=str,
+            choices=['csv', 'parquet', 'xlsx'],
+            default='csv',
+            help='Formato de exportación (csv, parquet, xlsx)'
+        )
+        parser.add_argument(
+            '--export-workers',
+            type=int,
+            default=4,
+            help='Número de workers para exportación paralela'
+        )
+        parser.add_argument(
+            '--export-chunk-size',
+            type=int,
+            help='Tamaño de chunk para exportación (opcional)'
+        )
+        parser.add_argument(
+            '--no-verify-exports',
+            action='store_true',
+            help='Deshabilitar verificación de exportaciones'
         )
         parser.add_argument(
             '--path', 
@@ -577,7 +946,7 @@ class Interface:
             type=str,
             default='%d.%m.%Y %H:%M:%S.%f %Z%z',
             help='Formato de fecha y hora para la conversión'
-        )
+        )       
         return parser.parse_args()
 
     def _configurar_logging(self, config: AppConfig) -> None:
@@ -634,6 +1003,42 @@ class Interface:
         except Exception as e:
             self.logger.error(f"Error durante el procesamiento de datos: {str(e)}")
             raise
+    
+    def _configurar_exportador(self, config: AppConfig) -> None:
+        """Configura el exportador con los parámetros especificados"""
+        export_config = ExportConfig(
+            format=config.export_format,
+            chunk_size=config.export_chunk_size,
+            compression=config.export_compression,
+            max_workers=config.export_max_workers,
+            verify_exports=config.export_verify
+        )
+        self.exporter = DataDictionaryExporter(export_config)
+
+    def _exportar_datos(self, datos: Dict[str, Dict[str, pd.DataFrame]], output_path: Path) -> None:
+        """
+        Exporta los datos procesados al formato especificado
+        
+        Args:
+            datos: Diccionario de DataFrames a exportar
+            output_path: Ruta de salida para los archivos
+        """
+        try:
+            self.logger.info(f"Iniciando exportación de datos a {output_path}")
+            
+            metrics = self.exporter.export(datos, output_path)
+            
+            self.logger.info("=== Estadísticas de Exportación ===")
+            self.logger.info(f"Duración: {metrics.duration:.2f} segundos")
+            self.logger.info(f"Archivos procesados: {metrics.total_files}")
+            self.logger.info(f"Exportaciones exitosas: {metrics.successful_exports}")
+            self.logger.info(f"Exportaciones fallidas: {metrics.failed_exports}")
+            self.logger.info(f"Tasa de éxito: {metrics.success_rate:.1f}%")
+            self.logger.info(f"Tamaño total: {metrics.total_bytes / 1024 / 1024:.2f} MB")
+            
+        except ExportError as e:
+            self.logger.error(f"Error durante la exportación: {str(e)}")
+            raise
 
     @staticmethod
     def main() -> int:
@@ -652,13 +1057,20 @@ class Interface:
             # Crear configuración de la aplicación
             config = AppConfig(
                 input_path=Path(args.path),
+                output_path=Path(args.output),
                 log_file=Path(args.log) if args.log else None,
                 verbose=args.verbose,
-                show_structure=not args.no_structure
+                show_structure=not args.no_structure,
+                export_format=ExportFormat(args.export_format),
+                export_chunk_size=args.export_chunk_size,
+                export_max_workers=args.export_workers,
+                export_verify=not args.no_verify_exports
             )
             
             # Configurar logging
             interface._configurar_logging(config)
+            interface._configurar_exportador(config)
+
             interface.logger.info(f"Iniciando importación desde {config.input_path}")
             
             # Configuración del importador
@@ -669,11 +1081,9 @@ class Interface:
                 skip_hidden_files=True
             )
 
-            # Crear y ejecutar importador
+            # Importar y procesar datos
             importador = ImportadorCSV(config.input_path, import_config)
             datos = importador.importar()
-
-            # Procesar datos
             datos_procesados = interface._procesar_datos(datos)
 
             # Mostrar resultados
@@ -683,8 +1093,11 @@ class Interface:
             # Mostrar estructura si está habilitado
             if config.show_structure:
                 print("\n=== Estructura de Archivos ===")
-                imprimir_estructura(datos)
+                imprimir_estructura(datos_procesados)
             
+            # Exportar datos
+            interface._exportar_datos(datos_procesados, config.output_path)
+
             interface.logger.info("Proceso completado exitosamente")
             return 0
 
