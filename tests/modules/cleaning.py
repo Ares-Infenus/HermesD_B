@@ -3,7 +3,7 @@ import numpy as np
 import os
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from enum import Enum
 import argparse
@@ -378,7 +378,156 @@ class DataFrameProcessor:
         return processed_data
 
 ######################################################################################################################
+class ValidationErrorType(Enum):
+    """Tipos de errores de validación"""
+    NOT_DATAFRAME = "NOT_DATAFRAME"
+    INVALID_COLUMNS = "INVALID_COLUMNS"
+    INVALID_DATETIME = "INVALID_DATETIME"
+    INVALID_NUMERIC = "INVALID_NUMERIC"
 
+@dataclass
+class ValidationError:
+    """Clase para almacenar información detallada de errores"""
+    error_type: ValidationErrorType
+    pair: str
+    details: str
+    column: Optional[str] = None
+
+class DataFrameValidator:
+    """Clase responsable de la validación de DataFrames siguiendo el principio SRP"""
+    
+    def __init__(self, required_columns: List[str]):
+        """
+        Inicializa el validador con las columnas requeridas
+        
+        Args:
+            required_columns: Lista de columnas que debe tener cada DataFrame
+        """
+        self.required_columns = required_columns
+        self.errors: List[ValidationError] = []
+
+    def validate_instance(self, df: pd.DataFrame, pair: str) -> bool:
+        """Valida que el objeto sea un DataFrame"""
+        if not isinstance(df, pd.DataFrame):
+            self.errors.append(
+                ValidationError(
+                    ValidationErrorType.NOT_DATAFRAME,
+                    pair,
+                    f"{pair} no es un DataFrame"
+                )
+            )
+            return False
+        return True
+
+    def validate_columns(self, df: pd.DataFrame, pair: str) -> bool:
+        """Valida que el DataFrame tenga las columnas correctas"""
+        if list(df.columns) != self.required_columns:
+            self.errors.append(
+                ValidationError(
+                    ValidationErrorType.INVALID_COLUMNS,
+                    pair,
+                    f"Columnas encontradas: {list(df.columns)}",
+                )
+            )
+            return False
+        return True
+
+    def validate_datetime(self, df: pd.DataFrame, pair: str, datetime_col: str) -> bool:
+        """Valida que la columna datetime tenga el tipo correcto"""
+        if not pd.api.types.is_datetime64_any_dtype(df[datetime_col]):
+            self.errors.append(
+                ValidationError(
+                    ValidationErrorType.INVALID_DATETIME,
+                    pair,
+                    f"La columna {datetime_col} no es de tipo datetime",
+                    datetime_col
+                )
+            )
+            return False
+        return True
+
+    def validate_numeric_columns(self, df: pd.DataFrame, pair: str, numeric_columns: List[str]) -> bool:
+        """Valida que las columnas numéricas tengan el tipo correcto"""
+        is_valid = True
+        for col in numeric_columns:
+            if not pd.api.types.is_float_dtype(df[col]):
+                self.errors.append(
+                    ValidationError(
+                        ValidationErrorType.INVALID_NUMERIC,
+                        pair,
+                        f"La columna {col} no es de tipo float",
+                        col
+                    )
+                )
+                is_valid = False
+        return is_valid
+
+class DataFrameValidatorService:
+    """Clase de servicio que coordina la validación (Facade Pattern)"""
+    
+    def __init__(self):
+        self.required_columns = ['Local time', 'Open', 'High', 'Low', 'Close', 'Volume']
+        self.validator = DataFrameValidator(self.required_columns)
+        
+    def validate_dataframes(self, data_dict: Dict[str, Dict[str, pd.DataFrame]]) -> List[ValidationError]:
+        """
+        Valida la estructura de los DataFrames
+        
+        Args:
+            data_dict: Diccionario con estructura {timeframe: {pair: DataFrame}}
+        
+        Returns:
+            List[ValidationError]: Lista de errores encontrados
+        """
+        numeric_columns = [col for col in self.required_columns if col != 'Local time']
+        
+        for time_frame, pairs in data_dict.items():
+            for pair, df in pairs.items():
+                # Aplicamos validaciones en cadena
+                if (self.validator.validate_instance(df, pair) and
+                    self.validator.validate_columns(df, pair)):
+                    self.validator.validate_datetime(df, pair, 'Local time')
+                    self.validator.validate_numeric_columns(df, pair, numeric_columns)
+        
+        return self.validator.errors
+
+def format_validation_errors(errors: List[ValidationError]) -> str:
+    """
+    Formatea los errores de validación para su presentación
+    
+    Args:
+        errors: Lista de errores de validación
+    
+    Returns:
+        str: Mensaje formateado con los errores
+    """
+    if not errors:
+        return "Validación completada exitosamente. No se encontraron errores."
+    
+    error_messages = ["Se encontraron los siguientes errores:"]
+    for error in errors:
+        message = f"- Par {error.pair}: {error.details}"
+        if error.column:
+            message += f" (Columna: {error.column})"
+        error_messages.append(message)
+    
+    return "\n".join(error_messages)
+
+# Ejemplo de uso
+def validate_and_report(data_dict: Dict[str, Dict[str, pd.DataFrame]]) -> None:
+    """
+    Función principal que ejecuta la validación y reporta los resultados
+    
+    Args:
+        data_dict: Diccionario con estructura {timeframe: {pair: DataFrame}}
+    """
+    try:
+        validator_service = DataFrameValidatorService()
+        errors = validator_service.validate_dataframes(data_dict)
+        print(format_validation_errors(errors))
+    except Exception as e:
+        print(f"Error inesperado durante la validación: {str(e)}")
+###################################################################################################################
 @dataclass
 class AppConfig:
     """Configuración global de la aplicación"""
@@ -393,6 +542,7 @@ class Interface:
     
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
+        #self.csv_validator = validate_dataframes_structure()
         self.processor = DataFrameProcessor()
 
     @staticmethod
@@ -471,10 +621,13 @@ class Interface:
         """Procesa los datos importados aplicando las transformaciones necesarias"""
         try:
             self.logger.info("Iniciando procesamiento de datos...")
-            
+
             # Convertir columnas de tiempo
             datos_procesados = self.processor.convertir_local_time(datos)
             
+            # Validador de estructura
+            validador = validate_and_report(datos_procesados)
+
             self.logger.info("Procesamiento de datos completado")
             return datos_procesados
             
