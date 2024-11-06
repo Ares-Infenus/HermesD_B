@@ -3,13 +3,12 @@ import numpy as np
 import os
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional, List,Union
+from typing import Dict, Any, Optional, List, Union, Tuple
 from dataclasses import dataclass
 from enum import Enum
 import argparse
 import sys
 from datetime import datetime
-from enum import Enum
 import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,19 +19,19 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-class ImportError(Exception):
+class CSVImportError(Exception):
     """Clase base para excepciones de importación"""
     pass
 
-class FileNotFoundError(ImportError):
+class CSVFileNotFoundError(CSVImportError):
     """Error cuando no se encuentra el archivo"""
     pass
 
-class InvalidCSVError(ImportError):
+class InvalidCSVError(CSVImportError):
     """Error cuando el CSV es inválido"""
     pass
 
-class PermissionError(ImportError):
+class CSVPermissionError(CSVImportError):
     """Error de permisos"""
     pass
 
@@ -44,12 +43,12 @@ class ImportConfig:
     max_file_size: int = 1024 * 1024 * 100  # 100MB
     supported_extensions: tuple = ('.csv',)
     skip_hidden_files: bool = True
-    chunk_size: int = None
+    chunk_size: Optional[int] = None
 
 class ImportadorCSV:
     """Clase para importar archivos CSV de forma recursiva"""
 
-    def __init__(self, carpeta: str, config: ImportConfig = None):
+    def __init__(self, carpeta: str, config: Optional[ImportConfig] = None):
         """
         Inicializa el importador
         
@@ -66,11 +65,11 @@ class ImportadorCSV:
     def _validar_carpeta(self) -> None:
         """Valida que la carpeta exista y sea accesible"""
         if not self.carpeta.exists():
-            raise FileNotFoundError(f"La carpeta {self.carpeta} no existe")
+            raise CSVFileNotFoundError(f"La carpeta {self.carpeta} no existe")
         if not self.carpeta.is_dir():
             raise NotADirectoryError(f"{self.carpeta} no es un directorio")
         if not os.access(self.carpeta, os.R_OK):
-            raise PermissionError(f"No hay permisos de lectura para {self.carpeta}")
+            raise CSVPermissionError(f"No hay permisos de lectura para {self.carpeta}")
 
     def _validar_archivo(self, ruta: Path) -> None:
         """
@@ -80,14 +79,14 @@ class ImportadorCSV:
             ruta: Ruta al archivo a validar
             
         Raises:
-            FileNotFoundError: Si el archivo no existe
-            PermissionError: Si no hay permisos de lectura
+            CSVFileNotFoundError: Si el archivo no existe
+            CSVPermissionError: Si no hay permisos de lectura
             ValueError: Si el archivo es demasiado grande
         """
         if not ruta.exists():
-            raise FileNotFoundError(f"El archivo {ruta} no existe")
+            raise CSVFileNotFoundError(f"El archivo {ruta} no existe")
         if not os.access(ruta, os.R_OK):
-            raise PermissionError(f"No hay permisos de lectura para {ruta}")
+            raise CSVPermissionError(f"No hay permisos de lectura para {ruta}")
         if ruta.stat().st_size > self.config.max_file_size:
             raise ValueError(f"El archivo {ruta} excede el tamaño máximo permitido")
 
@@ -105,7 +104,7 @@ class ImportadorCSV:
             return False
         return archivo.suffix.lower() in self.config.supported_extensions
 
-    def _leer_csv(self, ruta: Path) -> pd.DataFrame:
+    def _leer_csv(self, ruta: Path) -> Union[pd.DataFrame, pd.io.parsers.TextFileReader]:
         """
         Lee un archivo CSV
         
@@ -113,17 +112,23 @@ class ImportadorCSV:
             ruta: Ruta al archivo CSV
             
         Returns:
-            pd.DataFrame: DataFrame con los datos del CSV
+            Union[pd.DataFrame, pd.io.parsers.TextFileReader]: DataFrame o iterator de chunks
             
         Raises:
             InvalidCSVError: Si hay errores al leer el CSV
         """
         try:
+            if self.config.chunk_size:
+                return pd.read_csv(
+                    ruta,
+                    encoding=self.config.encoding,
+                    sep=self.config.separator,
+                    chunksize=self.config.chunk_size
+                )
             return pd.read_csv(
                 ruta,
                 encoding=self.config.encoding,
-                sep=self.config.separator,
-                chunksize=self.config.chunk_size
+                sep=self.config.separator
             )
         except pd.errors.EmptyDataError:
             raise InvalidCSVError(f"El archivo {ruta} está vacío")
@@ -142,7 +147,7 @@ class ImportadorCSV:
             Dict: Estructura de datos con los DataFrames importados
             
         Raises:
-            ImportError: Si hay errores durante la importación
+            CSVImportError: Si hay errores durante la importación
         """
         self.logger.info(f"Iniciando importación desde {self.carpeta}")
         try:
@@ -182,7 +187,7 @@ class ImportadorCSV:
                 datos[ruta_relativa][nombre_archivo] = self._leer_csv(ruta)
                 archivos_procesados += 1
 
-            except ImportError as e:
+            except CSVImportError as e:
                 self.logger.error(f"Error al procesar {ruta}: {str(e)}")
                 errores += 1
                 continue
@@ -209,11 +214,16 @@ class ImportadorCSV:
             stats['total_archivos'] += len(archivos)
             
             for df in archivos.values():
-                stats['total_registros'] += len(df)
-                stats['memoria_utilizada'] += df.memory_usage(deep=True).sum()
+                if isinstance(df, pd.DataFrame):
+                    stats['total_registros'] += len(df)
+                    stats['memoria_utilizada'] += df.memory_usage(deep=True).sum()
+                else:  # Es un iterator de chunks
+                    for chunk in df:
+                        stats['total_registros'] += len(chunk)
+                        stats['memoria_utilizada'] += chunk.memory_usage(deep=True).sum()
 
         return stats
-    
+
 class ItemType(Enum):
     FOLDER = "📁"
     FILE = "📄"
@@ -249,14 +259,11 @@ def imprimir_estructura(
             raise RecursionError("Profundidad máxima excedida")
             
         for clave, valor in diccionario.items():
-            # Imprime la clave actual
-            print(format_line(clave, nivel, ItemType.FOLDER, config))
-            
-            # Procesa el valor si es un diccionario
             if isinstance(valor, dict):
+                print(format_line(clave, nivel, ItemType.FOLDER, config))
                 imprimir_estructura(valor, nivel + 1, config)
             else:
-                print(format_line(clave, nivel + 1, ItemType.FILE, config))
+                print(format_line(clave, nivel, ItemType.FILE, config))
                 
     except (TypeError, AttributeError) as e:
         raise ValueError(f"Diccionario inválido: {e}")
@@ -268,6 +275,12 @@ class DataFrameProcessor:
     
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.conversion_stats = {
+            'procesados': 0,
+            'exitosos': 0,
+            'fallidos': 0,
+            'errores': []
+        }
         
     def _try_datetime_formats(self, series: pd.Series) -> pd.Series:
         """
@@ -279,24 +292,20 @@ class DataFrameProcessor:
         Returns:
             pd.Series: Serie con las fechas convertidas a datetime
         """
-        # Lista de formatos a probar
+        # Lista de formatos únicos a probar
         formatos = [
-        '%d.%m.%Y %H:%M:%S.%f GMT%z',    # Formato con milisegundos y zona horaria
-        '%d.%m.%Y %H:%M:%S GMT%z',       # Formato sin milisegundos pero con zona horaria
-        '%d.%m.%Y %H:%M:%S.%f',          # Sin zona horaria
-        '%d.%m.%Y %H:%M:%S',             # Sin zona horaria ni milisegundos
-        '%Y-%m-%d %H:%M:%S.%f GMT%z',    # Formato alternativo con zona horaria
-        '%Y-%m-%d %H:%M:%S GMT%z',       # Formato alternativo sin milisegundos
-        '%d.%m.%Y %H:%M:%S.%f',
-        '%d.%m.%Y %H:%M:%S',
-        '%Y-%m-%d %H:%M:%S.%f',
-        '%Y-%m-%d %H:%M:%S',
-        '%d.%m.%Y %H:%M:%S.%f %Z',
-        '%d.%m.%Y %H:%M:%S.%f %z',
-        '%Y-%m-%d %H:%M:%S %Z',
-        '%Y-%m-%d %H:%M:%S %z',
-        '%Y-%m-%d %H:%M:%S.%f %z',  # Con microsegundos y offset
-        '%Y-%m-%d %H:%M:%S %Z'      # Con nombre de zona horaria
+            '%d.%m.%Y %H:%M:%S.%f GMT%z',    # Formato con milisegundos y zona horaria
+            '%d.%m.%Y %H:%M:%S GMT%z',        # Formato sin milisegundos pero con zona horaria
+            '%Y-%m-%d %H:%M:%S.%f GMT%z',     # Formato alternativo con zona horaria
+            '%Y-%m-%d %H:%M:%S GMT%z',        # Formato alternativo sin milisegundos
+            '%d.%m.%Y %H:%M:%S.%f',           # Formato básico con milisegundos
+            '%d.%m.%Y %H:%M:%S',              # Formato básico
+            '%Y-%m-%d %H:%M:%S.%f',           # Formato ISO con milisegundos
+            '%Y-%m-%d %H:%M:%S',              # Formato ISO básico
+            '%d.%m.%Y %H:%M:%S.%f %Z',        # Con nombre de zona horaria
+            '%d.%m.%Y %H:%M:%S.%f %z',        # Con offset de zona horaria
+            '%Y-%m-%d %H:%M:%S %Z',           # ISO con zona horaria
+            '%Y-%m-%d %H:%M:%S %z'            # ISO con offset
         ]
         
         for formato in formatos:
@@ -312,8 +321,51 @@ class DataFrameProcessor:
             self.logger.error(f"No se pudo convertir la fecha: {str(e)}")
             return pd.to_datetime(series, errors='coerce')
 
+    def _procesar_dataframe(self, df: Union[pd.DataFrame, pd.io.parsers.TextFileReader], 
+                           ruta_archivo: str) -> Tuple[pd.DataFrame, bool]:
+        """
+        Procesa un DataFrame individual o un iterator de chunks.
+        
+        Args:
+            df: DataFrame o iterator de chunks a procesar
+            ruta_archivo: Ruta del archivo para logging
+            
+        Returns:
+            Tuple[pd.DataFrame, bool]: DataFrame procesado y flag de éxito
+        """
+        try:
+            if isinstance(df, pd.io.parsers.TextFileReader):  # Es un iterator de chunks
+                chunks_procesados = []
+                for chunk in df:
+                    if 'Local time' in chunk.columns:
+                        chunk['Local time'] = self._try_datetime_formats(chunk['Local time'])
+                    chunks_procesados.append(chunk)
+                df_procesado = pd.concat(chunks_procesados, ignore_index=True)
+            else:  # Es un DataFrame normal
+                df_procesado = df.copy()
+                if 'Local time' in df_procesado.columns:
+                    df_procesado['Local time'] = self._try_datetime_formats(df_procesado['Local time'])
+
+            # Verificar valores NaT
+            if 'Local time' in df_procesado.columns:
+                nat_count = df_procesado['Local time'].isna().sum()
+                total_rows = len(df_procesado)
+                
+                if nat_count > 0:
+                    self.logger.warning(
+                        f"{nat_count}/{total_rows} valores no convertidos en {ruta_archivo}"
+                    )
+                
+                return df_procesado, (nat_count < total_rows)
+            
+            return df_procesado, True
+            
+        except Exception as e:
+            self.logger.error(f"Error procesando {ruta_archivo}: {str(e)}")
+            return df, False
+
     def convertir_local_time(self, 
-                           dataframes: Dict[str, Dict[str, pd.DataFrame]]) -> Dict[str, Dict[str, pd.DataFrame]]:
+                           dataframes: Dict[str, Dict[str, Union[pd.DataFrame, pd.io.parsers.TextFileReader]]]) -> Dict[str, Dict[str, pd.DataFrame]]:
         """
         Convierte la columna 'Local time' de los DataFrames a tipo datetime.
         
@@ -323,8 +375,11 @@ class DataFrameProcessor:
         Returns:
             Dict: Diccionario con los DataFrames procesados
         """
+        if not isinstance(dataframes, dict):
+            raise TypeError("El parámetro dataframes debe ser un diccionario")
+            
         processed_data = {}
-        conversion_stats = {
+        self.conversion_stats = {
             'procesados': 0,
             'exitosos': 0,
             'fallidos': 0,
@@ -332,62 +387,47 @@ class DataFrameProcessor:
         }
         
         for carpeta, archivos in dataframes.items():
+            if not isinstance(archivos, dict):
+                self.logger.error(f"Estructura inválida en carpeta {carpeta}")
+                continue
+                
             processed_data[carpeta] = {}
             
             for nombre_archivo, df in archivos.items():
-                conversion_stats['procesados'] += 1
-                df_procesado = df.copy()
+                self.conversion_stats['procesados'] += 1
+                ruta_archivo = f"{carpeta}/{nombre_archivo}"
                 
-                if 'Local time' in df_procesado.columns:
-                    try:
-                        # Intentar conversión con múltiples formatos
-                        df_procesado['Local time'] = self._try_datetime_formats(df_procesado['Local time'])
-                        
-                        # Verificar valores NaT
-                        nat_count = df_procesado['Local time'].isna().sum()
-                        total_rows = len(df_procesado)
-                        
-                        if nat_count > 0:
-                            self.logger.warning(
-                                f"{nat_count}/{total_rows} valores no convertidos en {carpeta}/{nombre_archivo}"
-                            )
-                            
-                        if nat_count < total_rows:  # Si al menos algunos valores se convirtieron
-                            conversion_stats['exitosos'] += 1
-                            self.logger.info(
-                                f"Convertida columna 'Local time' en {carpeta}/{nombre_archivo}"
-                                f" ({total_rows - nat_count}/{total_rows} valores válidos)"
-                            )
-                        else:
-                            conversion_stats['fallidos'] += 1
-                            error_msg = f"Ningún valor pudo ser convertido en {carpeta}/{nombre_archivo}"
-                            conversion_stats['errores'].append(error_msg)
-                            self.logger.error(error_msg)
-                            
-                    except Exception as e:
-                        conversion_stats['fallidos'] += 1
-                        error_msg = f"Error en {carpeta}/{nombre_archivo}: {str(e)}"
-                        conversion_stats['errores'].append(error_msg)
-                        self.logger.error(error_msg)
-                        
+                df_procesado, exito = self._procesar_dataframe(df, ruta_archivo)
+                
+                if exito:
+                    self.conversion_stats['exitosos'] += 1
+                    self.logger.info(f"Procesado exitoso: {ruta_archivo}")
+                else:
+                    self.conversion_stats['fallidos'] += 1
+                    error_msg = f"Conversión fallida en {ruta_archivo}"
+                    self.conversion_stats['errores'].append(error_msg)
+                    
                 processed_data[carpeta][nombre_archivo] = df_procesado
-                
+        
         # Registrar estadísticas finales
+        self._log_estadisticas_finales()
+        return processed_data
+    
+    def _log_estadisticas_finales(self) -> None:
+        """Registra las estadísticas finales del procesamiento"""
         self.logger.info(f"""
             Procesamiento completado:
-            - Total procesados: {conversion_stats['procesados']}
-            - Exitosos: {conversion_stats['exitosos']}
-            - Fallidos: {conversion_stats['fallidos']}
+            - Total procesados: {self.conversion_stats['procesados']}
+            - Exitosos: {self.conversion_stats['exitosos']}
+            - Fallidos: {self.conversion_stats['fallidos']}
         """)
         
-        if conversion_stats['errores']:
+        if self.conversion_stats['errores']:
             self.logger.warning("Errores encontrados durante la conversión:")
-            for error in conversion_stats['errores'][:5]:  # Mostrar solo los primeros 5 errores
+            for error in self.conversion_stats['errores'][:5]:
                 self.logger.warning(error)
-            if len(conversion_stats['errores']) > 5:
-                self.logger.warning(f"... y {len(conversion_stats['errores']) - 5} errores más")
-                
-        return processed_data
+            if len(self.conversion_stats['errores']) > 5:
+                self.logger.warning(f"... y {len(self.conversion_stats['errores']) - 5} errores más")
 
 ######################################################################################################################
 class ValidationErrorType(Enum):
