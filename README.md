@@ -1,5 +1,5 @@
 # HermesData
-
+He resucitado e qe estaba vlviendo a instalar windows es que necesitaba After effects para haer los gif e los botones y otras cosas
 ## Descripción
 **HermesDB** es una base de datos robusta diseñada para almacenar y gestionar datos históricos de candlestick a diversas temporalidades, facilitando un análisis detallado de activos financieros. Esta plataforma optimizada permite la captura de información de precios en diferentes intervalos de tiempo, desde 1 minuto hasta 1 mes, proporcionando una vista integral del comportamiento del mercado.
 
