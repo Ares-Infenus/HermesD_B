@@ -1,0 +1,61 @@
+/* Clase común para todos los botones */
+.button-hover {
+    -fx-background-color: black;  /* Fondo inicial (antes del hover) */
+    -fx-text-fill: white;          /* Color de texto inicial */
+}
+
+/* Estilo común cuando el mouse pasa por encima */
+.button-hover:hover {
+    -fx-text-fill: black;           /* Cambia el color del texto al pasar el mouse */
+}
+
+
+/* Botón verde */
+.light-green-button:hover {
+    -fx-background-color: #00ff00;  /* Fondo verde en el hover */
+}
+
+/* Botón rojo */
+.cyan-button:hover {
+    -fx-background-color: #00AAFF;  /* Fondo rojo en el hover */
+}
+
+/* Botón azul */
+.green-button:hover {
+    -fx-background-color: #00AA00;  /* Fondo azul en el hover */
+}
+
+/* Botón azul */
+.light-blue-button:hover {
+    -fx-background-color: #00AAFF;  /* Fondo verde en el hover */
+}
+
+/* Botón azul */
+.white-button:hover {
+    -fx-background-color: #FFFFFF;  /* Fondo verde en el hover */
+}
+
+/* Botón azul */
+.magenta-button:hover {
+    -fx-background-color: #FF00FF;  /* Fondo verde en el hover */
+}
+
+/* Botón azul */
+.yellow-button:hover {
+    -fx-background-color: #FFFF00;  /* Fondo verde en el hover */
+}
+
+/* Botón azul */
+.orange-button:hover {
+    -fx-background-color: #FFA500;  /* Fondo verde en el hover */
+}
+
+/* Botón azul */
+.red-button:hover {
+    -fx-background-color: #FF0000;  /* Fondo verde en el hover */
+}
+
+/* Botón azul */
+.gray-button:hover {
+    -fx-background-color: #AAAAAA;  /* Fondo verde en el hover */
+}

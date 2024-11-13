@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import java.lang.String?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.image.Image?>
+<?import javafx.scene.image.ImageView?>
+<?import javafx.scene.layout.Pane?>
+<?import javafx.scene.text.Font?>
+
+<Pane maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infinity" prefHeight="1080.0" prefWidth="1920.0" style="-fx-background-color: black;" xmlns="http://javafx.com/javafx/23.0.1" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.example.main.HelloController">
+   <children>
+      <Pane layoutX="10.0" layoutY="620.0" prefHeight="459.0" prefWidth="661.0">
+         <children>
+            <ImageView fitHeight="506.0" fitWidth="691.0" layoutX="-7.0" layoutY="2.0" pickOnBounds="true" preserveRatio="true">
+               <image>
+                  <Image url="@../../../img/Esqueleto_menu.png" />
+               </image>
+            </ImageView>
+            <Button layoutX="182.0" layoutY="54.0" mnemonicParsing="false" prefHeight="35.0" prefWidth="240.0" stylesheets="@../../../styles/botton_main_menu.css" text="MAIN MENU">
+               <font>
+                  <Font name="Courier New" size="18.0" />
+               </font>
+               <styleClass>
+                  <String fx:value="button-hover" />
+                  <String fx:value="white-button" />
+               </styleClass>
+            </Button>
+            <Button alignment="TOP_LEFT" contentDisplay="TEXT_ONLY" graphicTextGap="0.0" layoutX="23.0" layoutY="106.0" mnemonicParsing="false" prefHeight="37.0" prefWidth="282.0" stylesheets="@../../../styles/botton_main_menu.css" text="1. Data Management" textAlignment="CENTER" textOverrun="CLIP">
+               <font>
+                  <Font name="Courier New" size="18.0" />
+               </font>
+               <styleClass>
+                  <String fx:value="button-hover" />
+                  <String fx:value="light-green-button" />
+               </styleClass>
+            </Button>
+            <Button alignment="TOP_LEFT" layoutX="22.0" layoutY="161.0" mnemonicParsing="false" prefHeight="36.0" prefWidth="232.0" stylesheets="@../../../styles/botton_main_menu.css" text="2. Analysis">
+               <font>
+                  <Font name="Courier New" size="18.0" />
+               </font>
+               <styleClass>
+                  <String fx:value="button-hover" />
+                  <String fx:value="cyan-button" />
+               </styleClass>
+            </Button>
+            <Button layoutX="275.0" layoutY="161.0" mnemonicParsing="false" stylesheets="@../../../styles/botton_main_menu.css" text="3. Backtesting &amp; Optimization">
+               <font>
+                  <Font name="Courier New" size="18.0" />
+               </font>
+               <styleClass>
+                  <String fx:value="button-hover" />
+                  <String fx:value="yellow-button" />
+               </styleClass>
+            </Button>
+            <Button alignment="TOP_LEFT" layoutX="22.0" layoutY="212.0" mnemonicParsing="false" prefHeight="36.0" prefWidth="232.0" stylesheets="@../../../styles/botton_main_menu.css" text="4. Fund Management">
+               <font>
+                  <Font name="Courier New" size="18.0" />
+               </font>
+               <styleClass>
+                  <String fx:value="button-hover" />
+                  <String fx:value="green-button" />
+               </styleClass>
+            </Button>
+            <Button alignment="TOP_LEFT" layoutX="275.0" layoutY="212.0" mnemonicParsing="false" prefHeight="36.0" prefWidth="337.0" stylesheets="@../../../styles/botton_main_menu.css" text="5. Market News">
+               <font>
+                  <Font name="Courier New" size="18.0" />
+               </font>
+               <styleClass>
+                  <String fx:value="button-hover" />
+                  <String fx:value="light-blue-button" />
+               </styleClass>
+            </Button>
+            <Button alignment="TOP_LEFT" layoutX="23.0" layoutY="262.0" mnemonicParsing="false" prefHeight="25.0" prefWidth="232.0" stylesheets="@../../../styles/botton_main_menu.css" text="6. Reports">
+               <font>
+                  <Font name="Courier New" size="18.0" />
+               </font>
+               <styleClass>
+                  <String fx:value="button-hover" />
+                  <String fx:value="red-button" />
+               </styleClass>
+            </Button>
+            <Button alignment="TOP_LEFT" layoutX="276.0" layoutY="262.0" mnemonicParsing="false" prefHeight="36.0" prefWidth="337.0" stylesheets="@../../../styles/botton_main_menu.css" text="7. AI Assistant ">
+               <font>
+                  <Font name="Courier New" size="18.0" />
+               </font>
+               <styleClass>
+                  <String fx:value="button-hover" />
+                  <String fx:value="magenta-button" />
+               </styleClass>
+            </Button>
+            <Button alignment="TOP_LEFT" layoutX="21.0" layoutY="315.0" mnemonicParsing="false" prefHeight="36.0" prefWidth="232.0" stylesheets="@../../../styles/botton_main_menu.css" text="8. Settings">
+               <font>
+                  <Font name="Courier New" size="18.0" />
+               </font>
+               <styleClass>
+                  <String fx:value="button-hover" />
+                  <String fx:value="orange-button" />
+               </styleClass>
+            </Button>
+            <Button fx:id="exit" alignment="TOP_LEFT" layoutX="275.0" layoutY="315.0" mnemonicParsing="false" onAction="#handleExitAction" prefHeight="36.0" prefWidth="337.0" stylesheets="@../../../styles/botton_main_menu.css" text="9. Exit">
+               <font>
+                  <Font name="Courier New" size="18.0" />
+               </font>
+               <styleClass>
+                  <String fx:value="button-hover" />
+                  <String fx:value="red-button" />
+               </styleClass>
+            </Button>
+            <Button layoutX="21.0" layoutY="370.0" mnemonicParsing="false" prefHeight="25.0" prefWidth="232.0" stylesheets="@../../../styles/botton_main_menu.css" text="Select an option:">
+               <font>
+                  <Font name="Courier New" size="18.0" />
+               </font>
+               <styleClass>
+                  <String fx:value="button-hover" />
+                  <String fx:value="gray-button" />
+               </styleClass>
+            </Button>
+            <TextField layoutX="235.0" layoutY="370.0" prefHeight="25.0" prefWidth="394.0" promptText="Write and Press enter ......." style="-fx-background-color: green; -fx-alignment: white;">
+               <font>
+                  <Font name="Courier New" size="18.0" />
+               </font>
+            </TextField>
+         </children>
+      </Pane>
+   </children>
+</Pane>
